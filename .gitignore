@@ -1,0 +1,10 @@
+node_modules
+.next
+.wrangler
+dist
+.turbo
+.env
+.env.local
+apps/api/.dev.vars
+
+.pnpm-store

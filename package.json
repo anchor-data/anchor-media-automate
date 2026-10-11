@@ -1,0 +1,14 @@
+{
+  "name": "anchor-media-automate",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.13.1",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @ama/api --filter @ama/web dev",
+    "dev:api": "pnpm --filter @ama/api dev",
+    "dev:web": "pnpm --filter @ama/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
