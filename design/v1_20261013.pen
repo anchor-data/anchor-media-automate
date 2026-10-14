@@ -1,5 +1,5 @@
 {
-  "version": "2.20",
+  "version": "2.21",
   "children": [
     {
       "type": "frame",
@@ -350,19 +350,39 @@
                               ]
                             },
                             {
-                              "type": "text",
-                              "id": "knOrP",
-                              "fill": "$text-primary",
-                              "content": "@job_recruit_tech",
-                              "fontFamily": "$font-base",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
+                              "type": "frame",
+                              "id": "DjRjg",
+                              "name": "Account Info",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "knOrP",
+                                  "fill": "$text-primary",
+                                  "content": "@job_recruit_tech",
+                                  "fontFamily": "$font-base",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "WbPLY",
+                                  "name": "Topic and Time",
+                                  "fill": "$text-secondary",
+                                  "content": "エンジニア転職 · 毎日 18:00",
+                                  "fontFamily": "$font-base",
+                                  "fontSize": 10,
+                                  "fontWeight": "normal"
+                                }
+                              ]
                             }
                           ]
                         },
                         {
                           "type": "frame",
                           "id": "BmSpV",
+                          "name": "Agent Settings Button",
                           "fill": "$bg-panel",
                           "cornerRadius": 6,
                           "layout": "vertical",
@@ -375,7 +395,7 @@
                               "id": "siuM5",
                               "width": 12,
                               "height": 12,
-                              "icon": "settings-2",
+                              "icon": "bot",
                               "library": "lucide",
                               "fill": "$text-secondary"
                             }
@@ -433,6 +453,7 @@
                         {
                           "type": "frame",
                           "id": "Ft7Ut",
+                          "name": "Agent Settings Button",
                           "fill": "$bg-panel",
                           "cornerRadius": 6,
                           "layout": "vertical",
@@ -445,7 +466,7 @@
                               "id": "Vipz6",
                               "width": 12,
                               "height": 12,
-                              "icon": "settings-2",
+                              "icon": "bot",
                               "library": "lucide",
                               "fill": "$text-secondary"
                             }
@@ -503,6 +524,7 @@
                         {
                           "type": "frame",
                           "id": "bYTuB",
+                          "name": "Agent Settings Button",
                           "fill": "$bg-panel",
                           "cornerRadius": 6,
                           "layout": "vertical",
@@ -515,7 +537,7 @@
                               "id": "uK3xG",
                               "width": 12,
                               "height": 12,
-                              "icon": "settings-2",
+                              "icon": "bot",
                               "library": "lucide",
                               "fill": "$text-secondary"
                             }
@@ -18395,7 +18417,7 @@
       "id": "S0ZfX",
       "x": 1492,
       "y": 284,
-      "name": "Account Settings Modal Screen",
+      "name": "Agent Settings Modal Screen",
       "clip": true,
       "width": 1440,
       "height": 900,
@@ -18739,19 +18761,39 @@
                               ]
                             },
                             {
-                              "type": "text",
-                              "id": "h0gVo",
-                              "fill": "$text-primary",
-                              "content": "@job_recruit_tech",
-                              "fontFamily": "$font-base",
-                              "fontSize": 12,
-                              "fontWeight": "normal"
+                              "type": "frame",
+                              "id": "C7yosj",
+                              "name": "Account Info",
+                              "layout": "vertical",
+                              "gap": 2,
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "h0gVo",
+                                  "fill": "$text-primary",
+                                  "content": "@job_recruit_tech",
+                                  "fontFamily": "$font-base",
+                                  "fontSize": 12,
+                                  "fontWeight": "normal"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "Y2cUbD",
+                                  "name": "Topic and Time",
+                                  "fill": "$text-secondary",
+                                  "content": "エンジニア転職 · 毎日 18:00",
+                                  "fontFamily": "$font-base",
+                                  "fontSize": 10,
+                                  "fontWeight": "normal"
+                                }
+                              ]
                             }
                           ]
                         },
                         {
                           "type": "frame",
                           "id": "mbETc",
+                          "name": "Agent Settings Button",
                           "fill": "$bg-panel",
                           "cornerRadius": 6,
                           "layout": "vertical",
@@ -18764,7 +18806,7 @@
                               "id": "twsOg",
                               "width": 12,
                               "height": 12,
-                              "icon": "settings-2",
+                              "icon": "bot",
                               "library": "lucide",
                               "fill": "$text-secondary"
                             }
@@ -18822,6 +18864,7 @@
                         {
                           "type": "frame",
                           "id": "mnV3J",
+                          "name": "Agent Settings Button",
                           "fill": "$bg-panel",
                           "cornerRadius": 6,
                           "layout": "vertical",
@@ -18834,7 +18877,7 @@
                               "id": "fNHpg",
                               "width": 12,
                               "height": 12,
-                              "icon": "settings-2",
+                              "icon": "bot",
                               "library": "lucide",
                               "fill": "$text-secondary"
                             }
@@ -18892,6 +18935,7 @@
                         {
                           "type": "frame",
                           "id": "E2SKCZ",
+                          "name": "Agent Settings Button",
                           "fill": "$bg-panel",
                           "cornerRadius": 6,
                           "layout": "vertical",
@@ -18904,7 +18948,7 @@
                               "id": "b9LYy",
                               "width": 12,
                               "height": 12,
-                              "icon": "settings-2",
+                              "icon": "bot",
                               "library": "lucide",
                               "fill": "$text-secondary"
                             }
@@ -20370,7 +20414,7 @@
             {
               "type": "frame",
               "id": "p8rIHR",
-              "name": "Account Settings Modal",
+              "name": "Agent Settings Modal",
               "clip": true,
               "width": 900,
               "height": 750,
@@ -20412,7 +20456,7 @@
                           "type": "text",
                           "id": "xwO7I",
                           "fill": "$text-primary",
-                          "content": "@job_recruit_tech 企画エンジン設定",
+                          "content": "@job_recruit_tech エージェント 設定",
                           "fontFamily": "$font-base",
                           "fontSize": 18,
                           "fontWeight": "bold"

@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { AppShell } from "../components/app-shell";
+import { WorkspaceProvider } from "../components/workspace-context";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Instagram求人メディア自動化ダッシュボード",
-  description: "Facade dashboard for agent-driven recruiting content workflow"
+  title: "Anchor Media | Instagram求人メディア自動化",
+  description: "Instagram求人メディアの企画・投稿・分析を自動化するダッシュボード"
 };
 
 export default function RootLayout({
@@ -11,7 +13,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ja">
-      <body>{children}</body>
+      <body>
+        <WorkspaceProvider>
+          <AppShell>{children}</AppShell>
+        </WorkspaceProvider>
+      </body>
     </html>
   );
 }
