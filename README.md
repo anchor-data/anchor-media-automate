@@ -89,7 +89,7 @@ When both variables are set, API routes use Turso. Otherwise, they use the mock 
 Current mode is intentionally facade-first:
 
 - OpenAI Agents: mock runner implemented, live runner stubbed
-- Canva: mock client implemented, API client stubbed
+- Canva: mock client + live client (client-credentials auth: client id + secret only)
 - Instagram Graph: mock client implemented, live client stubbed
 
-Switch to live paths by setting keys in env (`OPENAI_API_KEY`, `CANVA_API_KEY`, `INSTAGRAM_ACCESS_TOKEN`) and replacing stubbed methods in `packages/integrations`.
+Switch to live paths by setting keys in env (`OPENAI_API_KEY`, `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`, `INSTAGRAM_ACCESS_TOKEN`) and replacing stubbed methods in `packages/integrations`.

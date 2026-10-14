@@ -15,7 +15,8 @@ type Bindings = {
   TURSO_DATABASE_URL?: string;
   TURSO_AUTH_TOKEN?: string;
   OPENAI_API_KEY?: string;
-  CANVA_API_KEY?: string;
+  CANVA_CLIENT_ID?: string;
+  CANVA_CLIENT_SECRET?: string;
   INSTAGRAM_ACCESS_TOKEN?: string;
   ALLOWED_ORIGIN?: string;
 };
@@ -35,7 +36,7 @@ app.get("/health", (c) => {
       c.env.TURSO_DATABASE_URL && c.env.TURSO_AUTH_TOKEN ? "turso" : "mock",
     integrations: {
       openai: Boolean(c.env.OPENAI_API_KEY),
-      canva: Boolean(c.env.CANVA_API_KEY),
+      canva: Boolean(c.env.CANVA_CLIENT_ID && c.env.CANVA_CLIENT_SECRET),
       instagram: Boolean(c.env.INSTAGRAM_ACCESS_TOKEN)
     }
   });
@@ -89,7 +90,10 @@ app.post("/agent/run", async (c) => {
     agentMode: c.env.AGENT_MODE ?? "mock",
     openAiApiKey: c.env.OPENAI_API_KEY
   });
-  const canva = createCanvaClient({ canvaApiKey: c.env.CANVA_API_KEY });
+  const canva = createCanvaClient({
+    canvaClientId: c.env.CANVA_CLIENT_ID,
+    canvaClientSecret: c.env.CANVA_CLIENT_SECRET
+  });
 
   const output = await runner.run(parsed.data, {
     getCandidateJobs: async () => get_candidate_jobs(repo),
