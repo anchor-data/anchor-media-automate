@@ -9,6 +9,7 @@ import { Modal } from "./modal";
 export function EngineSettingsModal({ accountId }: { accountId: string }) {
   const { accounts, closeModal, updateAccount, notify } = useWorkspace();
   const account = accounts.find((a) => a.id === accountId);
+  const [title, setTitle] = useState(account?.title ?? "");
   const [target, setTarget] = useState(account?.target ?? "");
   const [concept, setConcept] = useState(account?.concept ?? "");
   const [schedule, setSchedule] = useState(account?.schedule ?? SCHEDULE_OPTIONS[0]);
@@ -19,7 +20,7 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
 
   return (
     <Modal
-      title={`${account.handle} エージェント 設定`}
+      title={`${account.handle} エージェント設定`}
       icon="instagram"
       width={900}
       onClose={closeModal}
@@ -32,6 +33,7 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
             className="btn primary"
             onClick={() => {
               updateAccount(account.id, {
+                title: title.trim(),
                 target: target.trim(),
                 concept: concept.trim(),
                 schedule,
@@ -50,6 +52,13 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
         <div className="stack gap-16">
           <div className="tile">
             <span className="label">ターゲット & コンセプト</span>
+            <input
+              className="input"
+              aria-label="アカウント一覧の表示タイトル"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="アカウント一覧の表示タイトル"
+            />
             <input
               className="input"
               aria-label="ターゲット"
