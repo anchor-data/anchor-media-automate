@@ -1,7 +1,5 @@
-import { DashboardClient } from "../components/dashboard-client";
-import { fetchDashboardData } from "../lib/api";
+import { redirect } from "next/navigation";
 
-export default async function HomePage() {
-  const data = await fetchDashboardData();
-  return <DashboardClient initialData={data} />;
+export default function HomePage() {
+  redirect("/calendar");
 }
