@@ -14,6 +14,7 @@ export interface MockPost {
 export interface MockAccount {
   readonly id: string;
   readonly handle: string;
+  readonly title: string;
   readonly target: string;
   readonly concept: string;
   readonly schedule: string;
@@ -51,6 +52,7 @@ export const INITIAL_ACCOUNTS: readonly MockAccount[] = [
   {
     id: "acc_001",
     handle: "@job_recruit_tech",
+    title: "エンジニア転職",
     target: "リモートワーク希望の20-30代エンジニア",
     concept: "モダンエンジニアのためのキャリアアップ術",
     schedule: "毎日 18:00",
@@ -61,6 +63,7 @@ export const INITIAL_ACCOUNTS: readonly MockAccount[] = [
   {
     id: "acc_002",
     handle: "@sales_career_up",
+    title: "営業キャリアアップ",
     target: "転職を考える20代の営業職",
     concept: "営業スキルを武器にするキャリア設計",
     schedule: "平日 9:00",
@@ -71,6 +74,7 @@ export const INITIAL_ACCOUNTS: readonly MockAccount[] = [
   {
     id: "acc_003",
     handle: "@design_portfolio",
+    title: "デザインポートフォリオ",
     target: "デザイナー志望の学生・第二新卒",
     concept: "採用される作品集のつくり方",
     schedule: "毎日 12:00",

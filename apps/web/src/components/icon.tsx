@@ -8,6 +8,7 @@ export type IconName =
   | "plus"
   | "link"
   | "instagram"
+  | "bot"
   | "list"
   | "sparkles"
   | "x"
@@ -56,6 +57,15 @@ const PATHS: Record<IconName, ReactNode> = {
       <rect x="2" y="2" width="20" height="20" rx="5" />
       <circle cx="12" cy="12" r="4" />
       <path d="M17.5 6.5h.01" />
+    </>
+  ),
+  bot: (
+    <>
+      <rect x="4" y="8" width="16" height="11" rx="2" />
+      <path d="M12 4v4M9 2h6" />
+      <circle cx="9" cy="13" r="1" />
+      <circle cx="15" cy="13" r="1" />
+      <path d="M8 19v2M16 19v2" />
     </>
   ),
   list: <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />,

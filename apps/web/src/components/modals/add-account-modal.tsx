@@ -12,13 +12,14 @@ export function AddAccountModal() {
   const [schedule, setSchedule] = useState<string>(SCHEDULE_OPTIONS[0]);
   const [target, setTarget] = useState("");
   const [concept, setConcept] = useState("");
+  const [title, setTitle] = useState("");
   const [connected, setConnected] = useState(false);
 
   const canSubmit = handle.trim().length > 0;
 
   function submit() {
     if (!canSubmit) return;
-    addAccount(handle, schedule, target, concept);
+    addAccount(handle, schedule, target, concept, title);
     notify("アカウントを追加しました");
     closeModal();
   }
@@ -104,6 +105,16 @@ export function AddAccountModal() {
             placeholder="例: 未経験からデザインを学ぶノウハウ"
             value={concept}
             onChange={(e) => setConcept(e.target.value)}
+          />
+          <label className="label" htmlFor="acc-title">
+            アカウント一覧の表示タイトル
+          </label>
+          <input
+            id="acc-title"
+            className="input"
+            placeholder="例: エンジニア転職"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
           />
         </div>
       </div>

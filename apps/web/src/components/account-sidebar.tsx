@@ -32,14 +32,19 @@ export function AccountSidebar() {
               <span className="avatar">
                 <Icon name="instagram" size={14} />
               </span>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{account.handle}</span>
+              <span className="account-info">
+                <span className="account-handle">{account.handle}</span>
+                <span className="account-title">
+                  {account.title} · {account.schedule}
+                </span>
+              </span>
             </button>
             <button
               className="icon-btn sm"
-              aria-label={`${account.handle} の企画エンジン設定`}
+              aria-label={`${account.handle} のエージェント設定`}
               onClick={() => openModal({ kind: "engine", accountId: account.id })}
             >
-              <Icon name="settings-2" size={12} />
+              <Icon name="bot" size={12} />
             </button>
           </div>
         ))}

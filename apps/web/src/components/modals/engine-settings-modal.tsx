@@ -19,7 +19,7 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
 
   return (
     <Modal
-      title={`${account.handle} 企画エンジン設定`}
+      title={`${account.handle} エージェント 設定`}
       icon="instagram"
       width={900}
       onClose={closeModal}

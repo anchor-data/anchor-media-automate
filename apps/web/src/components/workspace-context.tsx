@@ -35,7 +35,13 @@ interface WorkspaceValue {
   selectPost: (id: string | null) => void;
   openModal: (modal: ModalState) => void;
   closeModal: () => void;
-  addAccount: (handle: string, schedule: string, target: string, concept: string) => void;
+  addAccount: (
+    handle: string,
+    schedule: string,
+    target: string,
+    concept: string,
+    title?: string
+  ) => void;
   updateAccount: (id: string, patch: Partial<MockAccount>) => void;
   updatePost: (id: string, patch: Partial<MockPost>) => void;
   deletePost: (id: string) => void;
@@ -74,12 +80,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       openModal: setModal,
       closeModal: () => setModal({ kind: "none" }),
       notify,
-      addAccount: (handle, schedule, target, concept) => {
+      addAccount: (handle, schedule, target, concept, title) => {
         const id = `acc_${Date.now()}`;
         const clean = handle.trim().replace(/^@?/, "@");
         const account: MockAccount = {
           id,
           handle: clean,
+          title: title?.trim() || concept.trim() || target.trim() || "新規アカウント",
           target: target.trim(),
           concept: concept.trim(),
           schedule,
