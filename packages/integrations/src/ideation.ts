@@ -361,14 +361,7 @@ Workflow:
   }
 }
 
-export function createIdeationAgent(options: {
-  agentMode?: "mock" | "openai" | "auto";
-  openAiApiKey?: string;
-}): IdeationAgent {
-  const mode = options.agentMode ?? "auto";
-  if (mode === "mock") return new MockIdeationAgent();
-  if (mode === "openai") return new OpenAIIdeationAgent(options.openAiApiKey);
-  // auto: use Agents API whenever a key is configured
-  if (options.openAiApiKey) return new OpenAIIdeationAgent(options.openAiApiKey);
-  return new MockIdeationAgent();
+/** Always use live OpenAI Agents API. MockIdeationAgent remains for tests only. */
+export function createIdeationAgent(options: { openAiApiKey?: string }): IdeationAgent {
+  return new OpenAIIdeationAgent(options.openAiApiKey);
 }

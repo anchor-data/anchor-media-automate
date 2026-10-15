@@ -12,7 +12,7 @@ Aligned with [`architecture_v1.md`](./architecture_v1.md) (v1.1 AI ideation adde
 |---|---|
 | Brand style | **Inspired-by** [わかる転職](https://www.instagram.com/wakaru_tensyoku/) — store structure as reference, do not copy IP |
 | Post format | Hybrid **8 slides @ 4:5** (`knowhow` + optional `job_pick` on slide 7) |
-| Ideation driver | **OpenAI Agents API** (`AGENT_MODE=auto` → Agents when `OPENAI_API_KEY` set; else mock) |
+| Ideation driver | **OpenAI Agents API** always (requires `OPENAI_API_KEY`) |
 | Guideline / reference | **Humans upload/edit via Dashboard** |
 | 求人 | Optional later — **not required** to ideate |
 | Scope end | **承認 → 予約** (no Instagram publish in this scope) |
@@ -77,21 +77,19 @@ pnpm --filter @ama/db seed:turso    # seed Phase-1 data if missing
 - `MockIdeationAgent` + **`OpenAIIdeationAgent`** (`@openai/agents`) with Backend tools
 - API routes: `/ideation/run`, accounts, guideline, references, memory, ideas, `/seed`
 - Web: workspace loads from API; IdeaModal → ideation; Engine settings → save guideline / manage references
-- Default `AGENT_MODE=auto`: uses Agents API when `OPENAI_API_KEY` is set
-
 **Try it**
 
 1. Put Turso + `OPENAI_API_KEY` in `apps/api/.dev.vars` (Wrangler does not read root `.env`)
-2. `pnpm dev` — `/health` should show `integrations.openai: true`
+2. `pnpm dev` — `/health` should show `mode: "openai-agents"` and `integrations.openai: true`
 3. Calendar → **アイデアから生成** → pick an idea  
    Draft text only — images are Phase 3
 
 **Acceptance**
 
 - [x] Ideation works with no jobs in DB
-- [x] Ideas respect guideline / references / memory dedupe (mock + Agents tools)
+- [x] Ideas respect guideline / references / memory dedupe (Agents tools)
 - [x] Humans can upsert guideline and add/remove references from the dashboard
-- [x] OpenAI Agents path implemented for ideation (set key to use live)
+- [x] Live OpenAI Agents path is always used for ideation
 
 ---
 
@@ -101,7 +99,7 @@ pnpm --filter @ama/db seed:turso    # seed Phase-1 data if missing
 
 **Planned work**
 
-1. `CreationAgent` (mock + later OpenAI) → `submit_deck` validated by `slideDeckSchema`
+1. `CreationAgent` (OpenAI Agents) → `submit_deck` validated by `slideDeckSchema`
 2. Extend Canva client: multi-field autofill (`s1_*`…`s8_*`), export **all 8** page URLs
 3. `POST /ideas/:id/create` → 202 + poll `generation_status`
 4. Dashboard: carousel preview (HTML from `slides_json` in mock; Canva PNGs when live)
@@ -133,7 +131,7 @@ pnpm --filter @ama/db seed:turso    # seed Phase-1 data if missing
 
 - [ ] Approve/reject update memory for the next ideation run
 - [ ] Schedule persists without calling Instagram
-- [ ] Full Flow A works in mock mode without credentials
+- [ ] Full Flow A works end-to-end with OpenAI Agents + Turso
 
 ---
 
@@ -142,17 +140,15 @@ pnpm --filter @ama/db seed:turso    # seed Phase-1 data if missing
 - Instagram Graph publish & insights
 - Analytics dashboard (live data)
 - Cron auto-fill of idea queue / auto-create drafts
-- Live OpenAI Agents on Workers (switch `AGENT_MODE=openai` after smoke test)
 - Job CSV ingestion as primary ideation input
 
 ---
 
 ## Suggested order of work from here
 
-1. **Phase 3** — creation agent + mock 8-slide render + preview  
+1. **Phase 3** — creation agent (OpenAI Agents) + 8-slide Canva render + preview  
 2. Canva OAuth + real brand template (parallel if Enterprise ready)  
-3. **Phase 4** — approve / reject / schedule + memory writes  
-4. OpenAI ideation/creation behind `AGENT_MODE=openai`
+3. **Phase 4** — approve / reject / schedule + memory writes
 
 ---
 

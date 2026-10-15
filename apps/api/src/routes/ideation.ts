@@ -13,7 +13,6 @@ import {
 import { z } from "zod";
 
 type Bindings = {
-  AGENT_MODE?: "mock" | "openai" | "auto";
   TURSO_DATABASE_URL?: string;
   TURSO_AUTH_TOKEN?: string;
   OPENAI_API_KEY?: string;
@@ -164,8 +163,6 @@ ideationRoutes.post("/ideation/run", async (c) => {
   if (!account) return c.json({ error: "Account not found" }, 404);
 
   const agent = createIdeationAgent({
-    // auto → OpenAI Agents API when OPENAI_API_KEY is set; mock otherwise
-    agentMode: c.env.AGENT_MODE ?? "auto",
     openAiApiKey: c.env.OPENAI_API_KEY
   });
 

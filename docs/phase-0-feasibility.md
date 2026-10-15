@@ -37,16 +37,15 @@ Do **not** call Autofill until user OAuth exists. Optional later check: exchange
 ### What we have
 
 - `OpenAIAgentsRunner` stub (`not implemented in v0`)
-- `AGENT_MODE=mock` default
-- Package intent: `@openai/agents` (not yet wired)
+- Ideation uses live `@openai/agents` (no `AGENT_MODE` switch)
+- Creation Agents path lands in Phase 3
 
 ### Risks on Cloudflare Workers
 
-- SDK may assume Node APIs → enable `nodejs_compat`
+- SDK may assume Node APIs → `nodejs_compat` enabled
 - Agent + tool loops can exceed Worker CPU/time → run ideation and creation as **separate requests**; use Queues/Workflows if needed
-- Fallback: OpenAI Responses API + hand-rolled tool loop behind the same `AgentRunner` interface
 
-**Verdict:** Proceed with mock agent in Phase 1–2 contracts. Live Agents implementation is Phase 2+ with a Workers smoke test before enabling `AGENT_MODE=openai` in production.
+**Verdict:** Live Agents for ideation is wired. Creation should follow the same tool-bound Agents pattern.
 
 ## Phase 0 exit criteria
 

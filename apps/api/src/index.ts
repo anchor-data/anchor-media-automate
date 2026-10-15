@@ -12,7 +12,6 @@ import { z } from "zod";
 import { ideationRoutes } from "./routes/ideation";
 
 type Bindings = {
-  AGENT_MODE?: "mock" | "openai" | "auto";
   TURSO_DATABASE_URL?: string;
   TURSO_AUTH_TOKEN?: string;
   OPENAI_API_KEY?: string;
@@ -34,7 +33,7 @@ app.get("/health", (c) => {
   return c.json({
     ok: true,
     service: "ama-api",
-    mode: c.env.AGENT_MODE ?? "mock",
+    mode: "openai-agents",
     dataStore:
       c.env.TURSO_DATABASE_URL && c.env.TURSO_AUTH_TOKEN ? "turso" : "mock",
     integrations: {
@@ -90,7 +89,6 @@ app.post("/agent/run", async (c) => {
 
   const repo = createRepo(c.env);
   const runner = createAgentRunner({
-    agentMode: c.env.AGENT_MODE ?? "mock",
     openAiApiKey: c.env.OPENAI_API_KEY
   });
   const canva = createCanvaClient({
@@ -153,7 +151,6 @@ app.post("/agent/regenerate", async (c) => {
   }
 
   const runner = createAgentRunner({
-    agentMode: c.env.AGENT_MODE ?? "mock",
     openAiApiKey: c.env.OPENAI_API_KEY
   });
   const updated = await regenerate_post(runner, detail.post);
