@@ -7,16 +7,32 @@ import { SCHEDULE_OPTIONS } from "../../lib/mock-data";
 import { Modal } from "./modal";
 
 export function EngineSettingsModal({ accountId }: { accountId: string }) {
-  const { accounts, closeModal, updateAccount, notify } = useWorkspace();
+  const {
+    accounts,
+    closeModal,
+    notify,
+    saveGuideline,
+    references,
+    memoryItems,
+    ideas,
+    addReference,
+    removeReference,
+    removeMemory,
+    apiReady
+  } = useWorkspace();
   const account = accounts.find((a) => a.id === accountId);
   const [title, setTitle] = useState(account?.title ?? "");
   const [target, setTarget] = useState(account?.target ?? "");
   const [concept, setConcept] = useState(account?.concept ?? "");
   const [schedule, setSchedule] = useState(account?.schedule ?? SCHEDULE_OPTIONS[0]);
   const [prompt, setPrompt] = useState(account?.systemPrompt ?? "");
-  const [fileName, setFileName] = useState<string | null>(null);
+  const [refTitle, setRefTitle] = useState("");
+  const [refBody, setRefBody] = useState("");
+  const [saving, setSaving] = useState(false);
 
   if (!account) return null;
+
+  const queued = ideas.filter((i) => i.accountId === accountId && i.status === "queued");
 
   return (
     <Modal
@@ -26,24 +42,32 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
       onClose={closeModal}
       footer={
         <>
-          <button className="btn ghost" onClick={closeModal}>
+          <button className="btn ghost" onClick={closeModal} disabled={saving}>
             キャンセル
           </button>
           <button
             className="btn primary"
+            disabled={saving}
             onClick={() => {
-              updateAccount(account.id, {
+              setSaving(true);
+              void saveGuideline(account.id, {
                 title: title.trim(),
                 target: target.trim(),
                 concept: concept.trim(),
                 schedule,
                 systemPrompt: prompt
-              });
-              notify("設定を保存しました");
-              closeModal();
+              })
+                .then(() => {
+                  notify(apiReady ? "ガイドラインを保存しました" : "ローカルのみ保存しました");
+                  closeModal();
+                })
+                .catch((error: unknown) => {
+                  notify(error instanceof Error ? error.message : "保存に失敗しました");
+                })
+                .finally(() => setSaving(false));
             }}
           >
-            設定を保存
+            {saving ? "保存中…" : "設定を保存"}
           </button>
         </>
       }
@@ -51,7 +75,7 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
       <div className="two-col">
         <div className="stack gap-16">
           <div className="tile">
-            <span className="label">ターゲット & コンセプト</span>
+            <span className="label">ターゲット & コンセプト（ガイドライン）</span>
             <input
               className="input"
               aria-label="アカウント一覧の表示タイトル"
@@ -72,28 +96,85 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
               onChange={(e) => setConcept(e.target.value)}
             />
           </div>
-          <div className="tile">
-            <span className="label">自社データ・ドキュメント</span>
-            <label className="dropzone" style={{ cursor: "pointer" }}>
-              <Icon name="upload" size={16} />
-              {fileName ?? "ファイルをアップロード"}
-              <input
-                type="file"
-                hidden
-                onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
-              />
-            </label>
+          <div className="tile stack gap-8">
+            <span className="label">参照ライブラリ（人間が追加）</span>
+            <input
+              className="input"
+              placeholder="参照タイトル"
+              value={refTitle}
+              onChange={(e) => setRefTitle(e.target.value)}
+            />
+            <textarea
+              className="textarea"
+              rows={3}
+              placeholder="参考テキスト・構造メモ"
+              value={refBody}
+              onChange={(e) => setRefBody(e.target.value)}
+            />
+            <button
+              className="btn outline"
+              type="button"
+              disabled={!refTitle.trim()}
+              onClick={() => {
+                void addReference(account.id, refTitle.trim(), refBody.trim())
+                  .then(() => {
+                    setRefTitle("");
+                    setRefBody("");
+                    notify("参照を追加しました");
+                  })
+                  .catch((error: unknown) => {
+                    notify(error instanceof Error ? error.message : "参照の追加に失敗");
+                  });
+              }}
+            >
+              <Icon name="upload" size={14} />
+              参照を追加
+            </button>
+            <div className="stack gap-6">
+              {references.length === 0 ? (
+                <span className="muted small">参照はまだありません</span>
+              ) : (
+                references.map((ref) => (
+                  <div className="queue-item" key={ref.id}>
+                    <span className="stack gap-4" style={{ flex: 1 }}>
+                      <strong style={{ fontSize: 12 }}>
+                        [{ref.kind}] {ref.title}
+                      </strong>
+                      <span className="muted small">{ref.examplesText.slice(0, 80)}</span>
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      aria-label="参照を削除"
+                      onClick={() => {
+                        void removeReference(ref.id).then(() => notify("参照を削除しました"));
+                      }}
+                    >
+                      <Icon name="x" size={14} />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
           <div className="tile">
             <span className="label">メモリーシステム (重複防止)</span>
             <div className="tags">
-              {account.memory.length === 0 ? (
+              {memoryItems.length === 0 ? (
                 <span className="muted small">まだ記録がありません</span>
               ) : (
-                account.memory.map((m) => (
-                  <span className="tag" key={m}>
-                    {m}
-                  </span>
+                memoryItems.map((m) => (
+                  <button
+                    type="button"
+                    className="tag"
+                    key={m.id}
+                    title="クリックで削除"
+                    onClick={() => {
+                      void removeMemory(m.id).then(() => notify("メモリーを削除しました"));
+                    }}
+                  >
+                    {m.topicKey}
+                  </button>
                 ))
               )}
             </div>
@@ -127,12 +208,12 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
           </div>
           <div className="tile">
             <span className="label">生成されたアイデアキュー</span>
-            {account.ideaQueue.length === 0 ? (
+            {queued.length === 0 ? (
               <span className="muted small">キューは空です</span>
             ) : (
-              account.ideaQueue.map((idea, i) => (
-                <div className="queue-item" key={idea}>
-                  {idea}
+              queued.map((idea, i) => (
+                <div className="queue-item" key={idea.id}>
+                  {idea.title}
                   {i === 0 ? <Icon name="check" size={14} /> : null}
                 </div>
               ))

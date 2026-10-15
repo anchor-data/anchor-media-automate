@@ -3,19 +3,20 @@
 import { useState } from "react";
 import { Icon } from "../icon";
 import { useWorkspace } from "../workspace-context";
-import { generateIdeas, type IdeaCandidate } from "../../lib/mock-data";
+import type { IdeaCandidate } from "../../lib/mock-data";
 import { Modal } from "./modal";
 
 const SAMPLE_TEXT =
   "最近、フロントエンド界隈で話題になっている 'React Server Components' について、社内で議論がありました。\nこの技術のメリットとデメリットを、駆け出しエンジニア向けに分かりやすく解説するカルーセル投稿を作りたいです。";
 
 export function IdeaModal() {
-  const { closeModal, addDraftFromIdea, notify } = useWorkspace();
+  const { closeModal, addDraftFromIdea, notify, generateIdeasFromApi, apiReady } = useWorkspace();
   const [text, setText] = useState(SAMPLE_TEXT);
   const [url, setUrl] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [ideas, setIdeas] = useState<readonly IdeaCandidate[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const selected = ideas?.find((i) => i.id === selectedId) ?? null;
 
@@ -28,16 +29,16 @@ export function IdeaModal() {
         onClose={closeModal}
         footer={
           <>
-            <button className="btn ghost" onClick={() => setIdeas(null)}>
+            <button className="btn ghost" onClick={() => setIdeas(null)} disabled={busy}>
               戻る
             </button>
             <button
               className="btn primary"
-              disabled={!selected}
+              disabled={!selected || busy}
               onClick={() => {
                 if (!selected) return;
                 addDraftFromIdea(selected);
-                notify("下書きを作成しました");
+                notify("下書きを作成しました（画像生成は Phase 3）");
                 closeModal();
               }}
             >
@@ -47,7 +48,8 @@ export function IdeaModal() {
         }
       >
         <p className="muted" style={{ margin: 0, lineHeight: 1.5 }}>
-          AIが3件の企画案を作成しました。投稿にしたい案を選んでください。
+          AIが{ideas.length}件の企画案を作成しました。投稿にしたい案を選んでください。
+          {!apiReady ? "（オフラインモック）" : null}
         </p>
         {ideas.map((idea) => (
           <button
@@ -78,19 +80,31 @@ export function IdeaModal() {
       onClose={closeModal}
       footer={
         <>
-          <button className="btn ghost" onClick={closeModal}>
+          <button className="btn ghost" onClick={closeModal} disabled={busy}>
             キャンセル
           </button>
           <button
             className="btn primary"
-            disabled={text.trim().length === 0}
+            disabled={text.trim().length === 0 || busy}
             onClick={() => {
-              setIdeas(generateIdeas(text));
-              setSelectedId(null);
+              setBusy(true);
+              void generateIdeasFromApi({
+                seedText: text,
+                seedUrl: url.trim() || undefined
+              })
+                .then((items) => {
+                  setIdeas(items);
+                  setSelectedId(null);
+                  notify("企画案を生成しました");
+                })
+                .catch((error: unknown) => {
+                  notify(error instanceof Error ? error.message : "企画生成に失敗しました");
+                })
+                .finally(() => setBusy(false));
             }}
           >
             <Icon name="sparkles" size={14} />
-            AIで企画案を生成
+            {busy ? "生成中…" : "AIで企画案を生成"}
           </button>
         </>
       }

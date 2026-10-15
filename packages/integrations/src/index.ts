@@ -1,11 +1,16 @@
 import type { Account, Job, Post } from "@ama/shared";
-
-export class NotConfiguredError extends Error {
-  constructor(service: string) {
-    super(`${service} is not configured`);
-    this.name = "NotConfiguredError";
-  }
-}
+export { NotConfiguredError } from "./errors";
+export {
+  createIdeationAgent,
+  MockIdeationAgent,
+  OpenAIIdeationAgent,
+  type IdeationAgent,
+  type IdeationCandidate,
+  type IdeationRunInput,
+  type IdeationRunOutput,
+  type IdeationToolContext
+} from "./ideation";
+import { NotConfiguredError } from "./errors";
 
 export type AgentToolContext = {
   getCandidateJobs: () => Promise<Job[]>;
@@ -288,18 +293,15 @@ export class InstagramGraphClient implements InstagramClient {
 }
 
 export type IntegrationOptions = {
-  agentMode?: "mock" | "openai";
   openAiApiKey?: string;
   canvaClientId?: string;
   canvaClientSecret?: string;
   instagramAccessToken?: string;
 };
 
+/** Always use live OpenAI Agents path. MockAgentRunner remains for tests only. */
 export function createAgentRunner(options: IntegrationOptions): AgentRunner {
-  if (options.agentMode === "openai") {
-    return new OpenAIAgentsRunner(options.openAiApiKey);
-  }
-  return new MockAgentRunner();
+  return new OpenAIAgentsRunner(options.openAiApiKey);
 }
 
 export function createCanvaClient(options: IntegrationOptions): CanvaClient {

@@ -1,77 +1,178 @@
-import type { Account, Job, Post } from "@ama/shared";
+import type {
+  Account,
+  Guideline,
+  GuidelineUpsert,
+  Idea,
+  Job,
+  MemoryItem,
+  Post,
+  Reference,
+  ReferenceCreate
+} from "@ama/shared";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8787";
 
-export type DashboardData = {
-  health: {
-    ok: boolean;
-    mode: string;
-    dataStore: string;
-    integrations: Record<string, boolean>;
-  };
-  posts: Post[];
-  jobs: Job[];
-  account: Account | null;
-};
-
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, { cache: "no-store" });
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    cache: "no-store",
+    ...init,
+    headers: {
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...init?.headers
+    }
+  });
   if (!response.ok) {
-    throw new Error(`Request failed for ${path}: ${response.status}`);
+    const text = await response.text();
+    throw new Error(`${init?.method ?? "GET"} ${path} failed (${response.status}): ${text}`);
   }
   return (await response.json()) as T;
 }
 
-export async function fetchDashboardData(): Promise<DashboardData> {
-  const [health, posts, jobs, account] = await Promise.all([
-    getJson<DashboardData["health"]>("/health"),
-    getJson<{ items: Post[] }>("/posts"),
-    getJson<{ items: Job[] }>("/jobs"),
-    getJson<{ item: Account }>("/accounts/acc_001/config").catch(() => ({ item: null }))
-  ]);
-
-  return {
-    health,
-    posts: posts.items,
-    jobs: jobs.items,
-    account: account.item
-  };
+export async function fetchHealth() {
+  return request<{
+    ok: boolean;
+    mode: string;
+    dataStore: string;
+    integrations: Record<string, boolean>;
+  }>("/health");
 }
 
-export async function runAgent(accountId: string) {
-  const response = await fetch(`${API_BASE_URL}/agent/run`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accountId, limit: 5 })
+export async function ensureSeed() {
+  return request<{ seeded: boolean; accountId: string; mode: string }>("/seed", {
+    method: "POST"
   });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Agent run failed: ${text}`);
+}
+
+export async function listAccounts() {
+  return request<{ items: Account[]; mode: string }>("/accounts");
+}
+
+export async function listPosts() {
+  return request<{ items: Post[]; mode: string }>("/posts");
+}
+
+export async function listJobs() {
+  return request<{ items: Job[]; mode: string }>("/jobs");
+}
+
+export async function getGuideline(accountId: string) {
+  return request<{ item: Guideline; mode: string }>(`/accounts/${accountId}/guideline`);
+}
+
+export async function putGuideline(accountId: string, body: GuidelineUpsert) {
+  return request<{ item: Guideline; mode: string }>(`/accounts/${accountId}/guideline`, {
+    method: "PUT",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function listReferences(accountId: string) {
+  return request<{ items: Reference[]; mode: string }>(`/accounts/${accountId}/references`);
+}
+
+export async function createReference(accountId: string, body: ReferenceCreate) {
+  return request<{ item: Reference; mode: string }>(`/accounts/${accountId}/references`, {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+export async function deleteReference(referenceId: string) {
+  return request<{ ok: boolean }>(`/references/${referenceId}`, { method: "DELETE" });
+}
+
+export async function listMemory(accountId: string) {
+  return request<{ items: MemoryItem[]; mode: string }>(`/accounts/${accountId}/memory`);
+}
+
+export async function deleteMemory(memoryId: string) {
+  return request<{ ok: boolean }>(`/memory/${memoryId}`, { method: "DELETE" });
+}
+
+export async function listIdeas(accountId: string, status?: string) {
+  const q = status ? `?status=${encodeURIComponent(status)}` : "";
+  return request<{ items: Idea[]; mode: string }>(`/accounts/${accountId}/ideas${q}`);
+}
+
+export async function runIdeation(input: {
+  accountId: string;
+  count?: number;
+  seedText?: string;
+  seedUrl?: string;
+}) {
+  return request<{
+    mode: string;
+    summary: string;
+    items: Idea[];
+    reasoning: string[];
+    agentRunId: string;
+  }>("/ideation/run", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function patchIdea(
+  ideaId: string,
+  body: {
+    status?: Idea["status"];
+    rejectReason?: string;
   }
-  return response.json();
+) {
+  return request<{ item: Idea; mode: string }>(`/ideas/${ideaId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
 }
 
 export async function approvePost(postId: string) {
-  const response = await fetch(`${API_BASE_URL}/posts/${postId}/approve`, {
-    method: "POST"
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Approve failed: ${text}`);
-  }
-  return response.json();
+  return request<{ item: Post }>(`/posts/${postId}/approve`, { method: "POST" });
 }
 
-export async function regeneratePost(postId: string) {
-  const response = await fetch(`${API_BASE_URL}/agent/regenerate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ postId })
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Regenerate failed: ${text}`);
+export type DashboardBundle = {
+  health: Awaited<ReturnType<typeof fetchHealth>>;
+  accounts: Account[];
+  posts: Post[];
+  guideline: Guideline | null;
+  references: Reference[];
+  memory: MemoryItem[];
+  ideas: Idea[];
+  dataStore: string;
+};
+
+export async function fetchWorkspaceBundle(accountId?: string): Promise<DashboardBundle> {
+  await ensureSeed().catch(() => null);
+  const health = await fetchHealth();
+  const accountsRes = await listAccounts();
+  const postsRes = await listPosts();
+  const activeId = accountId ?? accountsRes.items[0]?.id;
+  if (!activeId) {
+    return {
+      health,
+      accounts: accountsRes.items,
+      posts: postsRes.items,
+      guideline: null,
+      references: [],
+      memory: [],
+      ideas: [],
+      dataStore: health.dataStore
+    };
   }
-  return response.json();
+  const [guidelineRes, referencesRes, memoryRes, ideasRes] = await Promise.all([
+    getGuideline(activeId).catch(() => null),
+    listReferences(activeId),
+    listMemory(activeId),
+    listIdeas(activeId)
+  ]);
+  return {
+    health,
+    accounts: accountsRes.items,
+    posts: postsRes.items,
+    guideline: guidelineRes?.item ?? null,
+    references: referencesRes.items,
+    memory: memoryRes.items,
+    ideas: ideasRes.items,
+    dataStore: health.dataStore
+  };
 }

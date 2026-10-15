@@ -22,7 +22,9 @@ packages/
   shared/         # zod schemas and shared types
 ```
 
-## Quick start (mock mode, no credentials)
+## Quick start
+
+Ideation uses the **OpenAI Agents API** and requires `OPENAI_API_KEY` in `apps/api/.dev.vars`.
 
 1. Install dependencies:
 
