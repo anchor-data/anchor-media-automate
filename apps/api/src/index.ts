@@ -9,6 +9,7 @@ import {
   createInstagramClient
 } from "@ama/integrations";
 import { z } from "zod";
+import { ideationRoutes } from "./routes/ideation";
 
 type Bindings = {
   AGENT_MODE?: "mock" | "openai";
@@ -26,6 +27,8 @@ app.use("*", async (c, next) => {
   const origin = c.env.ALLOWED_ORIGIN ?? "*";
   return cors({ origin })(c, next);
 });
+
+app.route("/", ideationRoutes);
 
 app.get("/health", (c) => {
   return c.json({

@@ -38,6 +38,7 @@ export interface Repository {
   listPostsByAccount(accountId: string, limit: number): Promise<Post[]>;
   getAccount(accountId: string): Promise<Account | null>;
   listAccounts(): Promise<Account[]>;
+  createAccount(account: Account): Promise<Account>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
     postId: string,
@@ -73,12 +74,16 @@ export interface Repository {
   ): Promise<MemoryItem>;
   deleteMemoryItem(memoryId: string): Promise<boolean>;
 
+  getIdea(ideaId: string): Promise<Idea | null>;
   listIdeas(accountId: string, status?: IdeaStatus): Promise<Idea[]>;
   createIdeas(ideas: Omit<Idea, "id" | "createdAt" | "updatedAt">[]): Promise<Idea[]>;
   updateIdea(
     ideaId: string,
     fields: Partial<Pick<Idea, "status" | "jobId" | "score" | "rationale">>
   ): Promise<Idea | null>;
+
+  /** Insert Phase-1 seed if account acc_001 is missing. */
+  ensurePhase1Seed(): Promise<{ seeded: boolean; accountId: string }>;
 }
 
 const nowIso = () => new Date().toISOString();
@@ -136,6 +141,13 @@ class MockRepository implements Repository {
   }
   async listAccounts() {
     return this.accounts;
+  }
+  async createAccount(account: Account) {
+    if (this.accounts.some((a) => a.id === account.id)) {
+      return account;
+    }
+    this.accounts.push(account);
+    return account;
   }
   async createPostDraft(input: DraftInput) {
     const post: Post = {
@@ -295,6 +307,10 @@ class MockRepository implements Repository {
     return this.memory.length < before;
   }
 
+  async getIdea(ideaId: string) {
+    return this.ideas.find((i) => i.id === ideaId) ?? null;
+  }
+
   async listIdeas(accountId: string, status?: IdeaStatus) {
     return this.ideas.filter(
       (idea) => idea.accountId === accountId && (status ? idea.status === status : true)
@@ -325,6 +341,22 @@ class MockRepository implements Repository {
     if (fields.rationale !== undefined) idea.rationale = fields.rationale;
     idea.updatedAt = nowIso();
     return idea;
+  }
+
+  async ensurePhase1Seed() {
+    if (this.accounts.some((a) => a.id === "acc_001")) {
+      return { seeded: false, accountId: "acc_001" };
+    }
+    const seed = createPhase1Seed();
+    this.accounts = [seed.account];
+    this.guidelines = [seed.guideline];
+    this.references = [...seed.references];
+    this.memory = [...seed.memory];
+    this.ideas = [...seed.ideas];
+    this.jobs = seed.jobs;
+    this.posts = seed.posts;
+    this.assets = seed.assets;
+    return { seeded: true, accountId: seed.account.id };
   }
 }
 
@@ -403,6 +435,26 @@ class TursoRepository implements Repository {
       "SELECT id, name, instagram_handle, canva_template_id, tone FROM accounts ORDER BY created_at DESC"
     );
     return result.rows.map(mapAccountRow);
+  }
+
+  async createAccount(account: Account) {
+    const existing = await this.getAccount(account.id);
+    if (existing) return existing;
+    const t = nowIso();
+    await this.client.execute({
+      sql: `INSERT INTO accounts (id, name, instagram_handle, canva_template_id, tone, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        account.id,
+        account.name,
+        account.instagramHandle,
+        account.canvaTemplateId,
+        account.tone,
+        t,
+        t
+      ]
+    });
+    return account;
   }
 
   async createPostDraft(input: DraftInput) {
@@ -711,6 +763,14 @@ class TursoRepository implements Repository {
     return (result.rowsAffected ?? 0) > 0;
   }
 
+  async getIdea(ideaId: string) {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM ideas WHERE id = ?",
+      args: [ideaId]
+    });
+    return result.rows[0] ? mapIdeaRow(result.rows[0]) : null;
+  }
+
   async listIdeas(accountId: string, status?: IdeaStatus) {
     const result = status
       ? await this.client.execute({
@@ -792,6 +852,97 @@ class TursoRepository implements Repository {
       args: [ideaId]
     });
     return updated.rows[0] ? mapIdeaRow(updated.rows[0]) : null;
+  }
+
+  async ensurePhase1Seed() {
+    const existing = await this.getAccount("acc_001");
+    if (existing) {
+      return { seeded: false, accountId: "acc_001" };
+    }
+    const seed = createPhase1Seed();
+    await this.createAccount(seed.account);
+    await this.client.execute({
+      sql: `INSERT INTO guidelines (
+              id, account_id, target, concept, tone, content_pillars_json, ng_rules_json,
+              cta_policy, hashtag_policy, job_pick_enabled, system_prompt, version, active,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+      args: [
+        seed.guideline.id,
+        seed.guideline.accountId,
+        seed.guideline.target,
+        seed.guideline.concept,
+        seed.guideline.tone,
+        JSON.stringify(seed.guideline.contentPillars),
+        JSON.stringify(seed.guideline.ngRules),
+        seed.guideline.ctaPolicy,
+        seed.guideline.hashtagPolicy,
+        seed.guideline.jobPickEnabled ? 1 : 0,
+        seed.guideline.systemPrompt,
+        seed.guideline.version,
+        seed.guideline.createdAt,
+        seed.guideline.updatedAt
+      ]
+    });
+    await this.client.batch(
+      seed.references.map((ref) => ({
+        sql: `INSERT INTO content_references (
+                id, account_id, kind, title, source_note, structure_json, examples_text, active,
+                created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          ref.id,
+          ref.accountId,
+          ref.kind,
+          ref.title,
+          ref.sourceNote,
+          ref.structureJson != null ? JSON.stringify(ref.structureJson) : null,
+          ref.examplesText,
+          ref.active ? 1 : 0,
+          ref.createdAt,
+          ref.updatedAt
+        ]
+      })),
+      "write"
+    );
+    await this.client.batch(
+      seed.ideas.map((idea) => ({
+        sql: `INSERT INTO ideas (
+                id, account_id, title, summary, pillar, topic_key, hook, angle,
+                reference_ids_json, job_id, status, agent_run_id, score, rationale,
+                created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          idea.id,
+          idea.accountId,
+          idea.title,
+          idea.summary,
+          idea.pillar,
+          idea.topicKey,
+          idea.hook,
+          idea.angle,
+          JSON.stringify(idea.referenceIds),
+          idea.jobId ?? null,
+          idea.status,
+          idea.agentRunId ?? null,
+          idea.score ?? null,
+          idea.rationale,
+          idea.createdAt,
+          idea.updatedAt
+        ]
+      })),
+      "write"
+    );
+    if (seed.jobs.length > 0) {
+      await this.client.batch(
+        seed.jobs.map((job) => ({
+          sql: "INSERT INTO jobs (id, company, role, location, url) VALUES (?, ?, ?, ?, ?)",
+          args: [job.id, job.company, job.role, job.location, job.url]
+        })),
+        "write"
+      );
+    }
+    return { seeded: true, accountId: seed.account.id };
   }
 }
 
