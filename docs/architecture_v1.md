@@ -206,3 +206,40 @@ Dashboardで分析
 7. **分析**
 
    投稿実績を取得し、次回の投稿改善に利用する。
+
+---
+
+# v1.1 Addendum: AI Ideation (first build scope)
+
+First implementation scope prioritizes **AI content ideation + 8-slide creation**, ending at **approve → schedule**. Instagram publish and metrics remain as in v1 but are not built yet.
+
+## Changes relative to the job-centric flow above
+
+| v1 step | v1.1 first scope |
+|---|---|
+| 1. 求人取得 | Optional later. Not required to ideate. |
+| 2. 選定 | **AI ideation** from human **guideline** + **reference** + system **memory** |
+| 3–5 | Unchanged in spirit: agent draft → Canva → human approve |
+| 6–7 | Deferred (store `scheduled` / `scheduled_at` only) |
+
+## Human-owned inputs (Dashboard)
+
+- **Guideline** — target, concept, tone, pillars, NG rules, CTA/hashtag policy, system prompt (uploaded/edited by humans)
+- **Reference** — slide/hook/voice patterns and docs (uploaded/managed by humans; inspired-by structure only)
+
+## System memory
+
+Written by Backend on approve/reject (and later edits). Used by the ideation agent to avoid duplicates.
+
+## Agent tools (ideation-first)
+
+- `get_guideline`, `list_references`, `get_memory`, `get_previous_posts`, `check_duplicate`, optional `get_candidate_jobs`, `submit_ideas`
+- Creation: `get_idea`, `submit_deck`, plus guideline/reference (and optional job)
+
+## New / extended data (see `packages/db/sql/schema.sql`)
+
+- `guidelines`, `references`, `memory_items`, `ideas`
+- `posts`: `idea_id`, `slides_json`, `scheduled_at`, generation fields
+- `post_assets`: `slide_index`, `template_id`
+
+Detail: `docs/features/content-ideation.md`, `docs/features/content-creation.md`, `docs/phase-0-feasibility.md`.

@@ -1,13 +1,33 @@
 import { createClient, type Client } from "@libsql/client";
-import type { Account, AgentRun, Job, Post, PostAsset } from "@ama/shared";
-
-type PostStatus = Post["status"];
+import type {
+  Account,
+  AgentRun,
+  Guideline,
+  GuidelineUpsert,
+  Idea,
+  IdeaStatus,
+  Job,
+  MemoryItem,
+  MemoryKind,
+  Post,
+  PostAsset,
+  PostStatus,
+  Reference,
+  ReferenceCreate,
+  ReferenceKind
+} from "@ama/shared";
+import { createPhase1Seed } from "./seed";
 
 export type DraftInput = {
   accountId: string;
   title: string;
   caption: string;
-  assets: Array<{ imageUrl: string; canvaDesignId?: string }>;
+  assets: Array<{ imageUrl: string; canvaDesignId?: string; slideIndex?: number; templateId?: string }>;
+  ideaId?: string;
+  postType?: Post["postType"];
+  slidesJson?: unknown;
+  hashtags?: string[];
+  generationStatus?: Post["generationStatus"];
 };
 
 export interface Repository {
@@ -19,69 +39,83 @@ export interface Repository {
   getAccount(accountId: string): Promise<Account | null>;
   listAccounts(): Promise<Account[]>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
-  updatePost(postId: string, fields: { title?: string; caption?: string; status?: PostStatus }): Promise<Post | null>;
+  updatePost(
+    postId: string,
+    fields: {
+      title?: string;
+      caption?: string;
+      status?: PostStatus;
+      scheduledAt?: string | null;
+      generationStatus?: Post["generationStatus"];
+      generationError?: string | null;
+      rejectReason?: string | null;
+      slidesJson?: unknown;
+      hashtags?: string[];
+    }
+  ): Promise<Post | null>;
   setPostStatus(postId: string, status: PostStatus): Promise<Post | null>;
   createAgentRun(run: AgentRun): Promise<void>;
+
+  getActiveGuideline(accountId: string): Promise<Guideline | null>;
+  upsertGuideline(accountId: string, input: GuidelineUpsert): Promise<Guideline>;
+
+  listReferences(accountId: string, kind?: ReferenceKind): Promise<Reference[]>;
+  createReference(accountId: string, input: ReferenceCreate): Promise<Reference>;
+  updateReference(
+    referenceId: string,
+    fields: Partial<ReferenceCreate> & { active?: boolean }
+  ): Promise<Reference | null>;
+  deleteReference(referenceId: string): Promise<boolean>;
+
+  listMemory(accountId: string, kinds?: MemoryKind[]): Promise<MemoryItem[]>;
+  createMemoryItem(
+    item: Omit<MemoryItem, "id" | "createdAt"> & { id?: string }
+  ): Promise<MemoryItem>;
+  deleteMemoryItem(memoryId: string): Promise<boolean>;
+
+  listIdeas(accountId: string, status?: IdeaStatus): Promise<Idea[]>;
+  createIdeas(ideas: Omit<Idea, "id" | "createdAt" | "updatedAt">[]): Promise<Idea[]>;
+  updateIdea(
+    ideaId: string,
+    fields: Partial<Pick<Idea, "status" | "jobId" | "score" | "rationale">>
+  ): Promise<Idea | null>;
 }
 
 const nowIso = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
 
-function seedMockData() {
-  const account: Account = {
-    id: "acc_001",
-    name: "Anchor Recruit JP",
-    instagramHandle: "@anchor_recruit",
-    canvaTemplateId: "tpl_recruit_01",
-    tone: "friendly, practical, career-focused"
-  };
-  const jobs: Job[] = [
-    {
-      id: "job_001",
-      company: "Anchor Data",
-      role: "Data Analyst",
-      location: "Tokyo",
-      url: "https://example.com/jobs/1"
-    },
-    {
-      id: "job_002",
-      company: "Anchor Data",
-      role: "Backend Engineer",
-      location: "Osaka",
-      url: "https://example.com/jobs/2"
-    }
-  ];
-  const t = nowIso();
-  const posts: Post[] = [
-    {
-      id: "post_001",
-      accountId: account.id,
-      title: "Data Analyst in Tokyo",
-      caption: "Tokyo hiring: Data Analyst role now open.",
-      status: "draft",
-      createdAt: t,
-      updatedAt: t
-    }
-  ];
-  const assets: PostAsset[] = [
-    {
-      id: "asset_001",
-      postId: "post_001",
-      imageUrl: "https://images.example.com/post_001_1.png",
-      canvaDesignId: "design_001"
-    }
-  ];
-  return { account, jobs, posts, assets };
+function parseJsonArray(value: unknown): string[] {
+  if (typeof value !== "string" || value.length === 0) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonUnknown(value: unknown): unknown {
+  if (value == null || value === "") return null;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 class MockRepository implements Repository {
   mode: "mock" = "mock";
-  private seed = seedMockData();
+  private seed = createPhase1Seed();
   private accounts = [this.seed.account];
   private jobs = this.seed.jobs;
   private posts = this.seed.posts;
   private assets = this.seed.assets;
   private agentRuns: AgentRun[] = [];
+  private guidelines = [this.seed.guideline];
+  private references = [...this.seed.references];
+  private memory = [...this.seed.memory];
+  private ideas = [...this.seed.ideas];
 
   async listJobs() {
     return this.jobs;
@@ -110,40 +144,187 @@ class MockRepository implements Repository {
       title: input.title,
       caption: input.caption,
       status: "draft",
+      ideaId: input.ideaId,
+      postType: input.postType,
+      slidesJson: input.slidesJson,
+      hashtags: input.hashtags ?? [],
+      generationStatus: input.generationStatus ?? "ready",
       createdAt: nowIso(),
       updatedAt: nowIso()
     };
-    const assets = input.assets.map((asset) => ({
+    const assets = input.assets.map((asset, index) => ({
       id: id("asset"),
       postId: post.id,
       imageUrl: asset.imageUrl,
-      canvaDesignId: asset.canvaDesignId
+      canvaDesignId: asset.canvaDesignId,
+      slideIndex: asset.slideIndex ?? index,
+      templateId: asset.templateId
     }));
     this.posts.unshift(post);
     this.assets.push(...assets);
     return { post, assets };
   }
   async setPostStatus(postId: string, status: PostStatus) {
-    const post = this.posts.find((p) => p.id === postId);
-    if (!post) return null;
-    post.status = status;
-    post.updatedAt = nowIso();
-    return post;
+    return this.updatePost(postId, { status });
   }
   async updatePost(
     postId: string,
-    fields: { title?: string; caption?: string; status?: PostStatus }
+    fields: {
+      title?: string;
+      caption?: string;
+      status?: PostStatus;
+      scheduledAt?: string | null;
+      generationStatus?: Post["generationStatus"];
+      generationError?: string | null;
+      rejectReason?: string | null;
+      slidesJson?: unknown;
+      hashtags?: string[];
+    }
   ) {
     const post = this.posts.find((p) => p.id === postId);
     if (!post) return null;
     if (fields.title !== undefined) post.title = fields.title;
     if (fields.caption !== undefined) post.caption = fields.caption;
     if (fields.status !== undefined) post.status = fields.status;
+    if (fields.scheduledAt !== undefined) post.scheduledAt = fields.scheduledAt;
+    if (fields.generationStatus !== undefined) post.generationStatus = fields.generationStatus;
+    if (fields.generationError !== undefined) post.generationError = fields.generationError;
+    if (fields.rejectReason !== undefined) post.rejectReason = fields.rejectReason;
+    if (fields.slidesJson !== undefined) post.slidesJson = fields.slidesJson;
+    if (fields.hashtags !== undefined) post.hashtags = fields.hashtags;
     post.updatedAt = nowIso();
     return post;
   }
   async createAgentRun(run: AgentRun) {
     this.agentRuns.push(run);
+  }
+
+  async getActiveGuideline(accountId: string) {
+    return (
+      this.guidelines
+        .filter((g) => g.accountId === accountId && g.active)
+        .sort((a, b) => b.version - a.version)[0] ?? null
+    );
+  }
+
+  async upsertGuideline(accountId: string, input: GuidelineUpsert) {
+    const current = await this.getActiveGuideline(accountId);
+    if (current) current.active = false;
+    const next: Guideline = {
+      id: id("guide"),
+      accountId,
+      ...input,
+      version: (current?.version ?? 0) + 1,
+      active: true,
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+    this.guidelines.push(next);
+    return next;
+  }
+
+  async listReferences(accountId: string, kind?: ReferenceKind) {
+    return this.references.filter(
+      (r) => r.accountId === accountId && r.active && (kind ? r.kind === kind : true)
+    );
+  }
+
+  async createReference(accountId: string, input: ReferenceCreate) {
+    const row: Reference = {
+      id: id("ref"),
+      accountId,
+      kind: input.kind,
+      title: input.title,
+      sourceNote: input.sourceNote ?? "",
+      structureJson: input.structureJson ?? null,
+      examplesText: input.examplesText ?? "",
+      active: input.active ?? true,
+      createdAt: nowIso(),
+      updatedAt: nowIso()
+    };
+    this.references.push(row);
+    return row;
+  }
+
+  async updateReference(
+    referenceId: string,
+    fields: Partial<ReferenceCreate> & { active?: boolean }
+  ) {
+    const row = this.references.find((r) => r.id === referenceId);
+    if (!row) return null;
+    if (fields.kind !== undefined) row.kind = fields.kind;
+    if (fields.title !== undefined) row.title = fields.title;
+    if (fields.sourceNote !== undefined) row.sourceNote = fields.sourceNote;
+    if (fields.structureJson !== undefined) row.structureJson = fields.structureJson;
+    if (fields.examplesText !== undefined) row.examplesText = fields.examplesText;
+    if (fields.active !== undefined) row.active = fields.active;
+    row.updatedAt = nowIso();
+    return row;
+  }
+
+  async deleteReference(referenceId: string) {
+    const before = this.references.length;
+    this.references = this.references.filter((r) => r.id !== referenceId);
+    return this.references.length < before;
+  }
+
+  async listMemory(accountId: string, kinds?: MemoryKind[]) {
+    return this.memory.filter(
+      (m) => m.accountId === accountId && (kinds ? kinds.includes(m.kind) : true)
+    );
+  }
+
+  async createMemoryItem(item: Omit<MemoryItem, "id" | "createdAt"> & { id?: string }) {
+    const row: MemoryItem = {
+      id: item.id ?? id("mem"),
+      accountId: item.accountId,
+      kind: item.kind,
+      topicKey: item.topicKey,
+      content: item.content,
+      sourcePostId: item.sourcePostId,
+      sourceIdeaId: item.sourceIdeaId,
+      createdAt: nowIso()
+    };
+    this.memory.push(row);
+    return row;
+  }
+
+  async deleteMemoryItem(memoryId: string) {
+    const before = this.memory.length;
+    this.memory = this.memory.filter((m) => m.id !== memoryId);
+    return this.memory.length < before;
+  }
+
+  async listIdeas(accountId: string, status?: IdeaStatus) {
+    return this.ideas.filter(
+      (idea) => idea.accountId === accountId && (status ? idea.status === status : true)
+    );
+  }
+
+  async createIdeas(ideas: Omit<Idea, "id" | "createdAt" | "updatedAt">[]) {
+    const t = nowIso();
+    const created = ideas.map((idea) => ({
+      ...idea,
+      id: id("idea"),
+      createdAt: t,
+      updatedAt: t
+    }));
+    this.ideas.unshift(...created);
+    return created;
+  }
+
+  async updateIdea(
+    ideaId: string,
+    fields: Partial<Pick<Idea, "status" | "jobId" | "score" | "rationale">>
+  ) {
+    const idea = this.ideas.find((i) => i.id === ideaId);
+    if (!idea) return null;
+    if (fields.status !== undefined) idea.status = fields.status;
+    if (fields.jobId !== undefined) idea.jobId = fields.jobId;
+    if (fields.score !== undefined) idea.score = fields.score;
+    if (fields.rationale !== undefined) idea.rationale = fields.rationale;
+    idea.updatedAt = nowIso();
+    return idea;
   }
 }
 
@@ -166,37 +347,42 @@ class TursoRepository implements Repository {
 
   async listPosts() {
     const result = await this.client.execute(
-      "SELECT id, account_id, title, caption, status, created_at, updated_at FROM posts ORDER BY created_at DESC"
+      `SELECT id, account_id, idea_id, post_type, title, caption, slides_json, hashtags_json,
+              status, generation_status, generation_error, reject_reason, scheduled_at,
+              created_at, updated_at
+       FROM posts ORDER BY created_at DESC`
     );
     return result.rows.map(mapPostRow);
   }
 
   async getPost(postId: string) {
     const postResult = await this.client.execute({
-      sql: "SELECT id, account_id, title, caption, status, created_at, updated_at FROM posts WHERE id = ?",
+      sql: `SELECT id, account_id, idea_id, post_type, title, caption, slides_json, hashtags_json,
+                   status, generation_status, generation_error, reject_reason, scheduled_at,
+                   created_at, updated_at
+            FROM posts WHERE id = ?`,
       args: [postId]
     });
     const first = postResult.rows[0];
     if (!first) return null;
 
     const assetsResult = await this.client.execute({
-      sql: "SELECT id, post_id, image_url, canva_design_id FROM post_assets WHERE post_id = ?",
+      sql: `SELECT id, post_id, image_url, canva_design_id, slide_index, template_id
+            FROM post_assets WHERE post_id = ? ORDER BY slide_index ASC`,
       args: [postId]
     });
     return {
       post: mapPostRow(first),
-      assets: assetsResult.rows.map((row) => ({
-        id: String(row.id),
-        postId: String(row.post_id),
-        imageUrl: String(row.image_url),
-        canvaDesignId: row.canva_design_id ? String(row.canva_design_id) : undefined
-      }))
+      assets: assetsResult.rows.map(mapAssetRow)
     };
   }
 
   async listPostsByAccount(accountId: string, limit: number) {
     const result = await this.client.execute({
-      sql: "SELECT id, account_id, title, caption, status, created_at, updated_at FROM posts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?",
+      sql: `SELECT id, account_id, idea_id, post_type, title, caption, slides_json, hashtags_json,
+                   status, generation_status, generation_error, reject_reason, scheduled_at,
+                   created_at, updated_at
+            FROM posts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`,
       args: [accountId, limit]
     });
     return result.rows.map(mapPostRow);
@@ -209,26 +395,14 @@ class TursoRepository implements Repository {
     });
     const row = result.rows[0];
     if (!row) return null;
-    return {
-      id: String(row.id),
-      name: String(row.name),
-      instagramHandle: String(row.instagram_handle),
-      canvaTemplateId: String(row.canva_template_id),
-      tone: String(row.tone)
-    };
+    return mapAccountRow(row);
   }
 
   async listAccounts() {
     const result = await this.client.execute(
       "SELECT id, name, instagram_handle, canva_template_id, tone FROM accounts ORDER BY created_at DESC"
     );
-    return result.rows.map((row) => ({
-      id: String(row.id),
-      name: String(row.name),
-      instagramHandle: String(row.instagram_handle),
-      canvaTemplateId: String(row.canva_template_id),
-      tone: String(row.tone)
-    }));
+    return result.rows.map(mapAccountRow);
   }
 
   async createPostDraft(input: DraftInput) {
@@ -237,12 +411,36 @@ class TursoRepository implements Repository {
     await this.client.batch(
       [
         {
-          sql: "INSERT INTO posts (id, account_id, title, caption, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          args: [postId, input.accountId, input.title, input.caption, "draft", t, t]
+          sql: `INSERT INTO posts (
+                  id, account_id, idea_id, post_type, title, caption, slides_json, hashtags_json,
+                  status, generation_status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          args: [
+            postId,
+            input.accountId,
+            input.ideaId ?? null,
+            input.postType ?? null,
+            input.title,
+            input.caption,
+            input.slidesJson != null ? JSON.stringify(input.slidesJson) : null,
+            JSON.stringify(input.hashtags ?? []),
+            "draft",
+            input.generationStatus ?? "ready",
+            t,
+            t
+          ]
         },
-        ...input.assets.map((asset) => ({
-          sql: "INSERT INTO post_assets (id, post_id, image_url, canva_design_id) VALUES (?, ?, ?, ?)",
-          args: [id("asset"), postId, asset.imageUrl, asset.canvaDesignId ?? null]
+        ...input.assets.map((asset, index) => ({
+          sql: `INSERT INTO post_assets (id, post_id, image_url, canva_design_id, slide_index, template_id)
+                VALUES (?, ?, ?, ?, ?, ?)`,
+          args: [
+            id("asset"),
+            postId,
+            asset.imageUrl,
+            asset.canvaDesignId ?? null,
+            asset.slideIndex ?? index,
+            asset.templateId ?? null
+          ]
         }))
       ],
       "write"
@@ -256,16 +454,41 @@ class TursoRepository implements Repository {
 
   async updatePost(
     postId: string,
-    fields: { title?: string; caption?: string; status?: PostStatus }
+    fields: {
+      title?: string;
+      caption?: string;
+      status?: PostStatus;
+      scheduledAt?: string | null;
+      generationStatus?: Post["generationStatus"];
+      generationError?: string | null;
+      rejectReason?: string | null;
+      slidesJson?: unknown;
+      hashtags?: string[];
+    }
   ) {
     const current = await this.getPost(postId);
     if (!current) return null;
+    const p = current.post;
     await this.client.execute({
-      sql: "UPDATE posts SET title = ?, caption = ?, status = ?, updated_at = ? WHERE id = ?",
+      sql: `UPDATE posts SET
+              title = ?, caption = ?, status = ?, scheduled_at = ?,
+              generation_status = ?, generation_error = ?, reject_reason = ?,
+              slides_json = ?, hashtags_json = ?, updated_at = ?
+            WHERE id = ?`,
       args: [
-        fields.title ?? current.post.title,
-        fields.caption ?? current.post.caption,
-        fields.status ?? current.post.status,
+        fields.title ?? p.title,
+        fields.caption ?? p.caption,
+        fields.status ?? p.status,
+        fields.scheduledAt !== undefined ? fields.scheduledAt : (p.scheduledAt ?? null),
+        fields.generationStatus ?? p.generationStatus ?? "ready",
+        fields.generationError !== undefined ? fields.generationError : (p.generationError ?? null),
+        fields.rejectReason !== undefined ? fields.rejectReason : (p.rejectReason ?? null),
+        fields.slidesJson !== undefined
+          ? JSON.stringify(fields.slidesJson)
+          : p.slidesJson != null
+            ? JSON.stringify(p.slidesJson)
+            : null,
+        JSON.stringify(fields.hashtags ?? p.hashtags ?? []),
         nowIso(),
         postId
       ]
@@ -275,33 +498,452 @@ class TursoRepository implements Repository {
   }
 
   async setPostStatus(postId: string, status: PostStatus) {
-    await this.client.execute({
-      sql: "UPDATE posts SET status = ?, updated_at = ? WHERE id = ?",
-      args: [status, nowIso(), postId]
-    });
-    const detail = await this.getPost(postId);
-    return detail?.post ?? null;
+    return this.updatePost(postId, { status });
   }
 
   async createAgentRun(run: AgentRun) {
     await this.client.execute({
-      sql: "INSERT INTO agent_runs (id, account_id, created_post_id, summary, output_json) VALUES (?, ?, ?, ?, ?)",
-      args: [run.id, run.accountId, run.createdPostId, run.summary, JSON.stringify(run.outputJson)]
+      sql: `INSERT INTO agent_runs (id, account_id, created_post_id, kind, summary, output_json)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [
+        run.id,
+        run.accountId,
+        run.createdPostId ?? null,
+        run.kind ?? "creation",
+        run.summary,
+        JSON.stringify(run.outputJson)
+      ]
     });
   }
+
+  async getActiveGuideline(accountId: string) {
+    const result = await this.client.execute({
+      sql: `SELECT * FROM guidelines
+            WHERE account_id = ? AND active = 1
+            ORDER BY version DESC LIMIT 1`,
+      args: [accountId]
+    });
+    const row = result.rows[0];
+    return row ? mapGuidelineRow(row) : null;
+  }
+
+  async upsertGuideline(accountId: string, input: GuidelineUpsert) {
+    const current = await this.getActiveGuideline(accountId);
+    const t = nowIso();
+    const nextId = id("guide");
+    const version = (current?.version ?? 0) + 1;
+    const statements = [
+      ...(current
+        ? [
+            {
+              sql: "UPDATE guidelines SET active = 0, updated_at = ? WHERE id = ?",
+              args: [t, current.id]
+            }
+          ]
+        : []),
+      {
+        sql: `INSERT INTO guidelines (
+                id, account_id, target, concept, tone, content_pillars_json, ng_rules_json,
+                cta_policy, hashtag_policy, job_pick_enabled, system_prompt, version, active,
+                created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        args: [
+          nextId,
+          accountId,
+          input.target,
+          input.concept,
+          input.tone,
+          JSON.stringify(input.contentPillars),
+          JSON.stringify(input.ngRules),
+          input.ctaPolicy,
+          input.hashtagPolicy,
+          input.jobPickEnabled ? 1 : 0,
+          input.systemPrompt,
+          version,
+          t,
+          t
+        ]
+      }
+    ];
+    await this.client.batch(statements, "write");
+    const created = await this.getActiveGuideline(accountId);
+    if (!created) throw new Error("Failed to upsert guideline");
+    return created;
+  }
+
+  async listReferences(accountId: string, kind?: ReferenceKind) {
+    const result = kind
+      ? await this.client.execute({
+          sql: `SELECT * FROM content_references
+                WHERE account_id = ? AND active = 1 AND kind = ?
+                ORDER BY created_at DESC`,
+          args: [accountId, kind]
+        })
+      : await this.client.execute({
+          sql: `SELECT * FROM content_references
+                WHERE account_id = ? AND active = 1
+                ORDER BY created_at DESC`,
+          args: [accountId]
+        });
+    return result.rows.map(mapReferenceRow);
+  }
+
+  async createReference(accountId: string, input: ReferenceCreate) {
+    const rowId = id("ref");
+    const t = nowIso();
+    await this.client.execute({
+      sql: `INSERT INTO content_references (
+              id, account_id, kind, title, source_note, structure_json, examples_text, active,
+              created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        rowId,
+        accountId,
+        input.kind,
+        input.title,
+        input.sourceNote ?? "",
+        input.structureJson != null ? JSON.stringify(input.structureJson) : null,
+        input.examplesText ?? "",
+        (input.active ?? true) ? 1 : 0,
+        t,
+        t
+      ]
+    });
+    const result = await this.client.execute({
+      sql: "SELECT * FROM content_references WHERE id = ?",
+      args: [rowId]
+    });
+    return mapReferenceRow(result.rows[0]!);
+  }
+
+  async updateReference(
+    referenceId: string,
+    fields: Partial<ReferenceCreate> & { active?: boolean }
+  ) {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM content_references WHERE id = ?",
+      args: [referenceId]
+    });
+    const current = result.rows[0];
+    if (!current) return null;
+    const mapped = mapReferenceRow(current);
+    await this.client.execute({
+      sql: `UPDATE content_references SET
+              kind = ?, title = ?, source_note = ?, structure_json = ?, examples_text = ?,
+              active = ?, updated_at = ?
+            WHERE id = ?`,
+      args: [
+        fields.kind ?? mapped.kind,
+        fields.title ?? mapped.title,
+        fields.sourceNote ?? mapped.sourceNote,
+        fields.structureJson !== undefined
+          ? fields.structureJson != null
+            ? JSON.stringify(fields.structureJson)
+            : null
+          : mapped.structureJson != null
+            ? JSON.stringify(mapped.structureJson)
+            : null,
+        fields.examplesText ?? mapped.examplesText,
+        (fields.active ?? mapped.active) ? 1 : 0,
+        nowIso(),
+        referenceId
+      ]
+    });
+    const updated = await this.client.execute({
+      sql: "SELECT * FROM content_references WHERE id = ?",
+      args: [referenceId]
+    });
+    return updated.rows[0] ? mapReferenceRow(updated.rows[0]) : null;
+  }
+
+  async deleteReference(referenceId: string) {
+    const result = await this.client.execute({
+      sql: "DELETE FROM content_references WHERE id = ?",
+      args: [referenceId]
+    });
+    return (result.rowsAffected ?? 0) > 0;
+  }
+
+  async listMemory(accountId: string, kinds?: MemoryKind[]) {
+    const result = await this.client.execute({
+      sql: `SELECT * FROM memory_items WHERE account_id = ? ORDER BY created_at DESC`,
+      args: [accountId]
+    });
+    const rows = result.rows.map(mapMemoryRow);
+    return kinds ? rows.filter((m) => kinds.includes(m.kind)) : rows;
+  }
+
+  async createMemoryItem(item: Omit<MemoryItem, "id" | "createdAt"> & { id?: string }) {
+    const rowId = item.id ?? id("mem");
+    const t = nowIso();
+    await this.client.execute({
+      sql: `INSERT INTO memory_items (
+              id, account_id, kind, topic_key, content, source_post_id, source_idea_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        rowId,
+        item.accountId,
+        item.kind,
+        item.topicKey,
+        item.content,
+        item.sourcePostId ?? null,
+        item.sourceIdeaId ?? null,
+        t
+      ]
+    });
+    return {
+      id: rowId,
+      accountId: item.accountId,
+      kind: item.kind,
+      topicKey: item.topicKey,
+      content: item.content,
+      sourcePostId: item.sourcePostId,
+      sourceIdeaId: item.sourceIdeaId,
+      createdAt: t
+    };
+  }
+
+  async deleteMemoryItem(memoryId: string) {
+    const result = await this.client.execute({
+      sql: "DELETE FROM memory_items WHERE id = ?",
+      args: [memoryId]
+    });
+    return (result.rowsAffected ?? 0) > 0;
+  }
+
+  async listIdeas(accountId: string, status?: IdeaStatus) {
+    const result = status
+      ? await this.client.execute({
+          sql: `SELECT * FROM ideas WHERE account_id = ? AND status = ? ORDER BY created_at DESC`,
+          args: [accountId, status]
+        })
+      : await this.client.execute({
+          sql: `SELECT * FROM ideas WHERE account_id = ? ORDER BY created_at DESC`,
+          args: [accountId]
+        });
+    return result.rows.map(mapIdeaRow);
+  }
+
+  async createIdeas(ideas: Omit<Idea, "id" | "createdAt" | "updatedAt">[]) {
+    const t = nowIso();
+    const created: Idea[] = ideas.map((idea) => ({
+      ...idea,
+      id: id("idea"),
+      createdAt: t,
+      updatedAt: t
+    }));
+    if (created.length === 0) return created;
+    await this.client.batch(
+      created.map((idea) => ({
+        sql: `INSERT INTO ideas (
+                id, account_id, title, summary, pillar, topic_key, hook, angle,
+                reference_ids_json, job_id, status, agent_run_id, score, rationale,
+                created_at, updated_at
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [
+          idea.id,
+          idea.accountId,
+          idea.title,
+          idea.summary,
+          idea.pillar,
+          idea.topicKey,
+          idea.hook,
+          idea.angle,
+          JSON.stringify(idea.referenceIds),
+          idea.jobId ?? null,
+          idea.status,
+          idea.agentRunId ?? null,
+          idea.score ?? null,
+          idea.rationale,
+          t,
+          t
+        ]
+      })),
+      "write"
+    );
+    return created;
+  }
+
+  async updateIdea(
+    ideaId: string,
+    fields: Partial<Pick<Idea, "status" | "jobId" | "score" | "rationale">>
+  ) {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM ideas WHERE id = ?",
+      args: [ideaId]
+    });
+    const current = result.rows[0];
+    if (!current) return null;
+    const mapped = mapIdeaRow(current);
+    await this.client.execute({
+      sql: `UPDATE ideas SET status = ?, job_id = ?, score = ?, rationale = ?, updated_at = ?
+            WHERE id = ?`,
+      args: [
+        fields.status ?? mapped.status,
+        fields.jobId !== undefined ? fields.jobId : (mapped.jobId ?? null),
+        fields.score !== undefined ? fields.score : (mapped.score ?? null),
+        fields.rationale ?? mapped.rationale,
+        nowIso(),
+        ideaId
+      ]
+    });
+    const updated = await this.client.execute({
+      sql: "SELECT * FROM ideas WHERE id = ?",
+      args: [ideaId]
+    });
+    return updated.rows[0] ? mapIdeaRow(updated.rows[0]) : null;
+  }
+}
+
+function mapAccountRow(row: Record<string, unknown>): Account {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    instagramHandle: String(row.instagram_handle),
+    canvaTemplateId: String(row.canva_template_id),
+    tone: String(row.tone)
+  };
 }
 
 function mapPostRow(row: Record<string, unknown>): Post {
   const status = String(row.status);
-  if (!["draft", "approved", "scheduled", "published"].includes(status)) {
+  if (!["draft", "approved", "scheduled", "published", "rejected", "failed"].includes(status)) {
     throw new Error(`Unexpected post status in DB: ${status}`);
   }
+  const generationStatus = assertEnum(
+    row.generation_status ? String(row.generation_status) : "ready",
+    GENERATION_STATUSES,
+    "generation status"
+  );
   return {
     id: String(row.id),
     accountId: String(row.account_id),
     title: String(row.title),
     caption: String(row.caption),
-    status: status as Post["status"],
+    status: status as PostStatus,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+    ideaId: row.idea_id ? String(row.idea_id) : undefined,
+    postType: row.post_type
+      ? assertEnum(String(row.post_type), POST_TYPES, "post type")
+      : undefined,
+    slidesJson: parseJsonUnknown(row.slides_json) ?? undefined,
+    hashtags: parseJsonArray(row.hashtags_json),
+    scheduledAt: row.scheduled_at == null ? null : String(row.scheduled_at),
+    generationStatus: generationStatus as Post["generationStatus"],
+    generationError: row.generation_error == null ? null : String(row.generation_error),
+    rejectReason: row.reject_reason == null ? null : String(row.reject_reason)
+  };
+}
+
+function mapAssetRow(row: Record<string, unknown>): PostAsset {
+  return {
+    id: String(row.id),
+    postId: String(row.post_id),
+    imageUrl: String(row.image_url),
+    canvaDesignId: row.canva_design_id ? String(row.canva_design_id) : undefined,
+    slideIndex: row.slide_index == null ? 0 : Number(row.slide_index),
+    templateId: row.template_id ? String(row.template_id) : undefined
+  };
+}
+
+function sqliteBool(value: unknown): boolean {
+  return Number(value) !== 0;
+}
+
+function assertEnum<T extends string>(value: string, allowed: readonly T[], label: string): T {
+  if ((allowed as readonly string[]).includes(value)) return value as T;
+  throw new Error(`Unexpected ${label} in DB: ${value}`);
+}
+
+const REFERENCE_KINDS = [
+  "slide_pattern",
+  "hook_pattern",
+  "voice_sample",
+  "doc",
+  "url_note"
+] as const;
+const MEMORY_KINDS = [
+  "topic_used",
+  "hook_used",
+  "idea_rejected",
+  "editor_feedback",
+  "preference"
+] as const;
+const IDEA_STATUSES = ["queued", "selected", "rejected", "used"] as const;
+const POST_TYPES = ["knowhow", "job_pick"] as const;
+const GENERATION_STATUSES = [
+  "pending",
+  "generating_copy",
+  "rendering",
+  "ready",
+  "failed"
+] as const;
+
+function mapGuidelineRow(row: Record<string, unknown>): Guideline {
+  return {
+    id: String(row.id),
+    accountId: String(row.account_id),
+    target: String(row.target),
+    concept: String(row.concept),
+    tone: String(row.tone),
+    contentPillars: parseJsonArray(row.content_pillars_json),
+    ngRules: parseJsonArray(row.ng_rules_json),
+    ctaPolicy: String(row.cta_policy ?? ""),
+    hashtagPolicy: String(row.hashtag_policy ?? ""),
+    jobPickEnabled: sqliteBool(row.job_pick_enabled),
+    systemPrompt: String(row.system_prompt ?? ""),
+    version: Number(row.version),
+    active: sqliteBool(row.active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function mapReferenceRow(row: Record<string, unknown>): Reference {
+  return {
+    id: String(row.id),
+    accountId: String(row.account_id),
+    kind: assertEnum(String(row.kind), REFERENCE_KINDS, "reference kind"),
+    title: String(row.title),
+    sourceNote: String(row.source_note ?? ""),
+    structureJson: parseJsonUnknown(row.structure_json),
+    examplesText: String(row.examples_text ?? ""),
+    active: sqliteBool(row.active),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at)
+  };
+}
+
+function mapMemoryRow(row: Record<string, unknown>): MemoryItem {
+  return {
+    id: String(row.id),
+    accountId: String(row.account_id),
+    kind: assertEnum(String(row.kind), MEMORY_KINDS, "memory kind"),
+    topicKey: String(row.topic_key),
+    content: String(row.content),
+    sourcePostId: row.source_post_id == null ? null : String(row.source_post_id),
+    sourceIdeaId: row.source_idea_id == null ? null : String(row.source_idea_id),
+    createdAt: String(row.created_at)
+  };
+}
+
+function mapIdeaRow(row: Record<string, unknown>): Idea {
+  return {
+    id: String(row.id),
+    accountId: String(row.account_id),
+    title: String(row.title),
+    summary: String(row.summary),
+    pillar: String(row.pillar),
+    topicKey: String(row.topic_key),
+    hook: String(row.hook ?? ""),
+    angle: String(row.angle ?? ""),
+    referenceIds: parseJsonArray(row.reference_ids_json),
+    jobId: row.job_id == null ? null : String(row.job_id),
+    status: assertEnum(String(row.status), IDEA_STATUSES, "idea status"),
+    agentRunId: row.agent_run_id == null ? null : String(row.agent_run_id),
+    score: row.score == null ? undefined : Number(row.score),
+    rationale: String(row.rationale ?? ""),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -322,3 +964,5 @@ export function createRepository(options: RepositoryOptions): Repository {
   }
   return new MockRepository();
 }
+
+export { createPhase1Seed } from "./seed";
