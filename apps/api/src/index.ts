@@ -12,7 +12,7 @@ import { z } from "zod";
 import { ideationRoutes } from "./routes/ideation";
 
 type Bindings = {
-  AGENT_MODE?: "mock" | "openai";
+  AGENT_MODE?: "mock" | "openai" | "auto";
   TURSO_DATABASE_URL?: string;
   TURSO_AUTH_TOKEN?: string;
   OPENAI_API_KEY?: string;

@@ -96,22 +96,29 @@ System 全体の **Source of Truth** として利用する。
 
 投稿生成・選定・改善提案など、知的処理を担当する。
 
-主な Tools：
+主な Tools（Backend 定義・Agent はこれ経由のみ）：
 
-- `get_candidate_jobs()`
+**Ideation（実装済み / OpenAI Agents SDK）**
+
+- `get_guideline()` — 人間が Dashboard で編集したガイドライン
+- `list_references()` — 人間がアップロードした参照（構造・フック等）
+- `get_memory()` — 重複防止・却下学習
 - `get_previous_posts()`
-- `get_account_config()`
-- `create_post_draft()`
+- `check_duplicate()`
+- `get_candidate_jobs()` — 任意（求人なしでも企画可能）
+
+**Creation（Phase 3 で Agents 化）**
+
+- `create_post_draft()` / `submit_deck()`
 - `regenerate_post()`
 
-Agent から DB を直接自由に操作させるのではなく、Backend 側で定義した限定的な Tool を経由して処理する。
+Agent から DB を直接自由に操作させるのではなく、Backend 側で定義した限定的な Tool を経由して処理する。書き込み（ideas / posts / memory）は API が確定する。
 
 Agent の主な役割：
 
-- 投稿候補の選定
-- Carousel 構成生成
-- Caption 生成
-- 過去投稿を踏まえた改善提案
+- 投稿候補の企画（Ideation）
+- Carousel 構成生成・Caption 生成（Creation）
+- 過去投稿・メモリーを踏まえた改善提案
 
 ---
 

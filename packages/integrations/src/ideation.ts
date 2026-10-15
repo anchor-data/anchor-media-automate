@@ -1,3 +1,5 @@
+import { Agent, run, setDefaultOpenAIKey, tool } from "@openai/agents";
+import { z } from "zod";
 import type { Guideline, Idea, Job, MemoryItem, Post, Reference } from "@ama/shared";
 import { NotConfiguredError } from "./errors";
 
@@ -29,6 +31,25 @@ export interface IdeationAgent {
   mode: "mock" | "openai";
   run(input: IdeationRunInput, tools: IdeationToolContext): Promise<IdeationRunOutput>;
 }
+
+const ideationIdeaSchema = z.object({
+  title: z.string(),
+  summary: z.string(),
+  pillar: z.string(),
+  topicKey: z.string(),
+  hook: z.string(),
+  angle: z.string(),
+  referenceIds: z.array(z.string()),
+  jobId: z.string().nullable(),
+  rationale: z.string(),
+  score: z.number().min(0).max(1).optional()
+});
+
+const ideationOutputSchema = z.object({
+  summary: z.string(),
+  reasoning: z.array(z.string()),
+  ideas: z.array(ideationIdeaSchema).min(1).max(10)
+});
 
 function normalizeTopicKey(value: string): string {
   return value
@@ -172,24 +193,182 @@ export class MockIdeationAgent implements IdeationAgent {
   }
 }
 
+/**
+ * OpenAI Agents SDK ideation — tools are Backend-owned (architecture_v1).
+ * Agent must call read tools, then return structured ideas (no direct DB writes).
+ */
 export class OpenAIIdeationAgent implements IdeationAgent {
   mode: "openai" = "openai";
   constructor(private apiKey?: string) {}
 
-  async run(): Promise<IdeationRunOutput> {
+  async run(input: IdeationRunInput, tools: IdeationToolContext): Promise<IdeationRunOutput> {
     if (!this.apiKey) {
-      throw new NotConfiguredError("OpenAI Ideation");
+      throw new NotConfiguredError("OpenAI Agents");
     }
-    throw new Error("OpenAI ideation agent is not implemented yet — use AGENT_MODE=mock");
+    setDefaultOpenAIKey(this.apiKey);
+
+    const accountId = input.accountId;
+    const get_guideline = tool({
+      name: "get_guideline",
+      description: "Load the active human-authored guideline for this Instagram account.",
+      parameters: z.object({}),
+      execute: async () => {
+        const guideline = await tools.getGuideline(accountId);
+        if (!guideline) throw new Error("No active guideline");
+        return guideline;
+      }
+    });
+
+    const list_references = tool({
+      name: "list_references",
+      description:
+        "List human-uploaded reference patterns (slide/hook/voice/docs). Structure only — inspired-by, never copy brand assets.",
+      parameters: z.object({
+        kind: z
+          .enum(["slide_pattern", "hook_pattern", "voice_sample", "doc", "url_note"])
+          .nullable()
+          .optional()
+      }),
+      execute: async ({ kind }) => {
+        const refs = await tools.listReferences(accountId);
+        return kind ? refs.filter((r) => r.kind === kind) : refs;
+      }
+    });
+
+    const get_memory = tool({
+      name: "get_memory",
+      description:
+        "Load memory items used for dedupe and learning (topic_used, idea_rejected, preferences).",
+      parameters: z.object({}),
+      execute: async () => tools.getMemory(accountId)
+    });
+
+    const get_previous_posts = tool({
+      name: "get_previous_posts",
+      description: "Recent posts for this account to avoid repeating topics.",
+      parameters: z.object({
+        limit: z.number().int().positive().max(50).default(20)
+      }),
+      execute: async ({ limit }) => {
+        const posts = await tools.getPreviousPosts(accountId, limit);
+        return posts.map((p) => ({
+          id: p.id,
+          title: p.title,
+          status: p.status,
+          createdAt: p.createdAt
+        }));
+      }
+    });
+
+    const get_candidate_jobs = tool({
+      name: "get_candidate_jobs",
+      description:
+        "Optional job listings. Usually empty; only use for job_pick ideas when guideline.jobPickEnabled is true.",
+      parameters: z.object({}),
+      execute: async () => tools.getCandidateJobs()
+    });
+
+    const check_duplicate = tool({
+      name: "check_duplicate",
+      description: "Check whether a topicKey or title is already used in memory, posts, or idea queue.",
+      parameters: z.object({
+        topicKey: z.string(),
+        title: z.string()
+      }),
+      execute: async ({ topicKey, title }) => {
+        const [memory, posts, queued] = await Promise.all([
+          tools.getMemory(accountId),
+          tools.getPreviousPosts(accountId, 30),
+          tools.listQueuedIdeas(accountId)
+        ]);
+        const blocked = usedTopicKeys(memory, posts, queued);
+        const normalized = normalizeTopicKey(topicKey || title);
+        const duplicate =
+          blocked.has(normalized) ||
+          blocked.has(normalizeTopicKey(title)) ||
+          blocked.has(topicKey);
+        return { duplicate, normalizedTopicKey: normalized };
+      }
+    });
+
+    const agent = new Agent({
+      name: "Instagram Ideation Agent",
+      model: "gpt-4.1",
+      instructions: `You are the ideation agent for a Japanese Instagram career/job-change media account.
+
+Architecture rules:
+- You ONLY access data through tools (never invent guideline/reference/memory).
+- Humans own guideline and references; you read them.
+- Memory and previous posts are for dedupe — do not repeat topicKey/titles.
+- Content style is inspired-by わかる転職 genre (structure/hooks), never copy brand text or characters.
+- Prefer knowhow carousel ideas. Jobs are optional; ignore jobs unless guideline.jobPickEnabled and candidates exist.
+- Output exactly the requested number of ideas as structured JSON.
+- topicKey must be stable snake/dot ascii-ish keys (e.g. prep.before_quit.three_steps).
+- Titles/summaries/hooks in Japanese unless guideline says otherwise.
+- Respect NG rules in the guideline.
+
+Workflow:
+1) Call get_guideline, list_references, get_memory, get_previous_posts.
+2) Optionally get_candidate_jobs.
+3) Draft candidates; call check_duplicate for each topicKey/title and replace duplicates.
+4) Return final structured ideas.`,
+      tools: [
+        get_guideline,
+        list_references,
+        get_memory,
+        get_previous_posts,
+        get_candidate_jobs,
+        check_duplicate
+      ],
+      outputType: ideationOutputSchema
+    });
+
+    const userMessage = [
+      `accountId: ${accountId}`,
+      `Generate exactly ${input.count} Instagram carousel ideas.`,
+      input.seedText ? `Operator seed text:\n${input.seedText}` : "No seed text.",
+      input.seedUrl ? `Optional seed URL: ${input.seedUrl}` : "No seed URL."
+    ].join("\n\n");
+
+    const result = await run(agent, userMessage, { maxTurns: 12 });
+    const output = ideationOutputSchema.parse(result.finalOutput);
+
+    const ideas: IdeationCandidate[] = output.ideas.slice(0, input.count).map((idea, index) => ({
+      accountId,
+      title: idea.title,
+      summary: idea.summary,
+      pillar: idea.pillar,
+      topicKey: idea.topicKey || normalizeTopicKey(idea.title),
+      hook: idea.hook,
+      angle: idea.angle,
+      referenceIds: idea.referenceIds,
+      jobId: idea.jobId,
+      status: "queued" as const,
+      agentRunId: null,
+      score: idea.score ?? 1 - index * 0.05,
+      rationale: idea.rationale
+    }));
+
+    if (ideas.length === 0) {
+      throw new Error("OpenAI Agents returned no ideas");
+    }
+
+    return {
+      summary: output.summary,
+      ideas,
+      reasoning: [...output.reasoning, "mode=openai-agents"]
+    };
   }
 }
 
 export function createIdeationAgent(options: {
-  agentMode?: "mock" | "openai";
+  agentMode?: "mock" | "openai" | "auto";
   openAiApiKey?: string;
 }): IdeationAgent {
-  if (options.agentMode === "openai") {
-    return new OpenAIIdeationAgent(options.openAiApiKey);
-  }
+  const mode = options.agentMode ?? "auto";
+  if (mode === "mock") return new MockIdeationAgent();
+  if (mode === "openai") return new OpenAIIdeationAgent(options.openAiApiKey);
+  // auto: use Agents API whenever a key is configured
+  if (options.openAiApiKey) return new OpenAIIdeationAgent(options.openAiApiKey);
   return new MockIdeationAgent();
 }

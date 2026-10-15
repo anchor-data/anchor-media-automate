@@ -293,7 +293,7 @@ export class InstagramGraphClient implements InstagramClient {
 }
 
 export type IntegrationOptions = {
-  agentMode?: "mock" | "openai";
+  agentMode?: "mock" | "openai" | "auto";
   openAiApiKey?: string;
   canvaClientId?: string;
   canvaClientSecret?: string;
@@ -301,7 +301,10 @@ export type IntegrationOptions = {
 };
 
 export function createAgentRunner(options: IntegrationOptions): AgentRunner {
-  if (options.agentMode === "openai") {
+  const useOpenAI =
+    options.agentMode === "openai" ||
+    (options.agentMode === "auto" && Boolean(options.openAiApiKey));
+  if (useOpenAI) {
     return new OpenAIAgentsRunner(options.openAiApiKey);
   }
   return new MockAgentRunner();
