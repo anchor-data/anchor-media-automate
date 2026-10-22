@@ -32,6 +32,10 @@ export interface IdeationAgent {
   run(input: IdeationRunInput, tools: IdeationToolContext): Promise<IdeationRunOutput>;
 }
 
+/**
+ * Tool parameter schemas must be OpenAI strict-JSON friendly:
+ * prefer `.nullable()` over `.optional()` / `.default()`.
+ */
 const ideationIdeaSchema = z.object({
   title: z.string(),
   summary: z.string(),
@@ -42,13 +46,18 @@ const ideationIdeaSchema = z.object({
   referenceIds: z.array(z.string()),
   jobId: z.string().nullable(),
   rationale: z.string(),
-  score: z.number().min(0).max(1).optional()
+  score: z.number().nullable()
 });
 
-const ideationOutputSchema = z.object({
+const submitIdeasSchema = z.object({
   summary: z.string(),
   reasoning: z.array(z.string()),
-  ideas: z.array(ideationIdeaSchema).min(1).max(10)
+  ideas: z.array(ideationIdeaSchema)
+});
+
+/** Empty tool args — avoid bare `{}` (strict JSON schema quirks). */
+const emptyArgsSchema = z.object({
+  confirm: z.boolean().nullable()
 });
 
 function normalizeTopicKey(value: string): string {
@@ -59,24 +68,53 @@ function normalizeTopicKey(value: string): string {
     .slice(0, 80);
 }
 
-function usedTopicKeys(
+function addBlockedKey(keys: Set<string>, value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return;
+  keys.add(trimmed);
+  const normalized = normalizeTopicKey(trimmed);
+  if (normalized) keys.add(normalized);
+}
+
+/** Topic keys and titles already used by memory, posts, or any stored idea. */
+export function usedTopicKeys(
   memory: MemoryItem[],
   posts: Post[],
-  queued: Idea[]
+  ideas: Idea[]
 ): Set<string> {
   const keys = new Set<string>();
   for (const item of memory) {
-    if (item.kind === "topic_used" || item.kind === "idea_rejected") {
-      keys.add(item.topicKey);
+    if (item.kind === "topic_used" || item.kind === "idea_rejected" || item.kind === "hook_used") {
+      addBlockedKey(keys, item.topicKey);
     }
   }
   for (const post of posts) {
-    keys.add(normalizeTopicKey(post.title));
+    addBlockedKey(keys, post.title);
   }
-  for (const idea of queued) {
-    keys.add(idea.topicKey);
+  for (const idea of ideas) {
+    addBlockedKey(keys, idea.topicKey);
+    addBlockedKey(keys, idea.title);
   }
   return keys;
+}
+
+export function withoutDuplicateIdeas<T extends { topicKey: string; title: string }>(
+  candidates: readonly T[],
+  blocked: Set<string>
+): { kept: T[]; skipped: string[] } {
+  const seen = new Set(blocked);
+  const kept: T[] = [];
+  const skipped: string[] = [];
+  for (const idea of candidates) {
+    const keys = [idea.topicKey, normalizeTopicKey(idea.topicKey), normalizeTopicKey(idea.title)];
+    if (keys.some((key) => key && seen.has(key))) {
+      skipped.push(idea.title);
+      continue;
+    }
+    for (const key of keys) addBlockedKey(seen, key);
+    kept.push(idea);
+  }
+  return { kept, skipped };
 }
 
 /** Deterministic ideation for local/CI — no OpenAI required. */
@@ -195,7 +233,8 @@ export class MockIdeationAgent implements IdeationAgent {
 
 /**
  * OpenAI Agents SDK ideation — tools are Backend-owned (architecture_v1).
- * Agent must call read tools, then return structured ideas (no direct DB writes).
+ * Final ideas are submitted via `submit_ideas` tool (more reliable than outputType
+ * after multi-tool turns, which often hit "Invalid output type" schema mismatches).
  */
 export class OpenAIIdeationAgent implements IdeationAgent {
   mode: "openai" = "openai";
@@ -208,10 +247,20 @@ export class OpenAIIdeationAgent implements IdeationAgent {
     setDefaultOpenAIKey(this.apiKey);
 
     const accountId = input.accountId;
+    const [memory, posts, existingIdeas] = await Promise.all([
+      tools.getMemory(accountId),
+      tools.getPreviousPosts(accountId, 50),
+      tools.listQueuedIdeas(accountId)
+    ]);
+    const blocked = usedTopicKeys(memory, posts, existingIdeas);
+    type SubmittedPayload = z.infer<typeof submitIdeasSchema>;
+    const submission: { value: SubmittedPayload | null } = { value: null };
+    let rejection: string | null = null;
+
     const get_guideline = tool({
       name: "get_guideline",
       description: "Load the active human-authored guideline for this Instagram account.",
-      parameters: z.object({}),
+      parameters: emptyArgsSchema,
       execute: async () => {
         const guideline = await tools.getGuideline(accountId);
         if (!guideline) throw new Error("No active guideline");
@@ -227,7 +276,6 @@ export class OpenAIIdeationAgent implements IdeationAgent {
         kind: z
           .enum(["slide_pattern", "hook_pattern", "voice_sample", "doc", "url_note"])
           .nullable()
-          .optional()
       }),
       execute: async ({ kind }) => {
         const refs = await tools.listReferences(accountId);
@@ -239,7 +287,7 @@ export class OpenAIIdeationAgent implements IdeationAgent {
       name: "get_memory",
       description:
         "Load memory items used for dedupe and learning (topic_used, idea_rejected, preferences).",
-      parameters: z.object({}),
+      parameters: emptyArgsSchema,
       execute: async () => tools.getMemory(accountId)
     });
 
@@ -247,10 +295,10 @@ export class OpenAIIdeationAgent implements IdeationAgent {
       name: "get_previous_posts",
       description: "Recent posts for this account to avoid repeating topics.",
       parameters: z.object({
-        limit: z.number().int().positive().max(50).default(20)
+        limit: z.number().int().positive().max(50).nullable()
       }),
       execute: async ({ limit }) => {
-        const posts = await tools.getPreviousPosts(accountId, limit);
+        const posts = await tools.getPreviousPosts(accountId, limit ?? 20);
         return posts.map((p) => ({
           id: p.id,
           title: p.title,
@@ -264,13 +312,14 @@ export class OpenAIIdeationAgent implements IdeationAgent {
       name: "get_candidate_jobs",
       description:
         "Optional job listings. Usually empty; only use for job_pick ideas when guideline.jobPickEnabled is true.",
-      parameters: z.object({}),
+      parameters: emptyArgsSchema,
       execute: async () => tools.getCandidateJobs()
     });
 
     const check_duplicate = tool({
       name: "check_duplicate",
-      description: "Check whether a topicKey or title is already used in memory, posts, or idea queue.",
+      description:
+        "Check whether a topicKey or title matches any stored idea, post, or memory item. Call this for every candidate before submit_ideas.",
       parameters: z.object({
         topicKey: z.string(),
         title: z.string()
@@ -291,6 +340,48 @@ export class OpenAIIdeationAgent implements IdeationAgent {
       }
     });
 
+    const submit_ideas = tool({
+      name: "submit_ideas",
+      description:
+        "Submit the final ideation result. Rejects topic keys or titles that already exist. If this returns ok: false, replace the rejected ideas and call it again.",
+      parameters: submitIdeasSchema,
+      execute: async (payload) => {
+        const parsed = submitIdeasSchema.safeParse(payload);
+        if (!parsed.success) {
+          rejection = parsed.error.message;
+          return {
+            ok: false,
+            error: parsed.error.message,
+            hint: "Provide summary (string), reasoning (string[]), ideas (array of objects with title, summary, pillar, topicKey, hook, angle, referenceIds[], jobId null|string, rationale, score null|number)."
+          };
+        }
+        const normalized = parsed.data.ideas.map((idea) => ({
+          ...idea,
+          title: idea.title.trim(),
+          topicKey: (idea.topicKey || "").trim() || normalizeTopicKey(idea.title)
+        }));
+        const { kept, skipped } = withoutDuplicateIdeas(normalized, blocked);
+        if (skipped.length > 0 || kept.length < input.count) {
+          rejection = `Duplicates rejected: ${skipped.join(" / ") || "not enough unique ideas"}`;
+          return {
+            ok: false,
+            accepted: 0,
+            requiredCount: input.count,
+            duplicateTitles: skipped,
+            message:
+              "These ideas match an existing topic key or title. Replace only the duplicates with new topics, then call submit_ideas again with the full set."
+          };
+        }
+        submission.value = { ...parsed.data, ideas: kept };
+        rejection = null;
+        return {
+          ok: true,
+          accepted: kept.length,
+          message: "Ideas accepted. Stop after this tool."
+        };
+      }
+    });
+
     const agent = new Agent({
       name: "Instagram Ideation Agent",
       model: "gpt-4.1",
@@ -299,64 +390,95 @@ export class OpenAIIdeationAgent implements IdeationAgent {
 Architecture rules:
 - You ONLY access data through tools (never invent guideline/reference/memory).
 - Humans own guideline and references; you read them.
-- Memory and previous posts are for dedupe — do not repeat topicKey/titles.
+- Memory, previous posts, and every stored idea (queued, selected, used, or rejected) are for dedupe. Never repeat a topicKey or title.
 - Content style is inspired-by わかる転職 genre (structure/hooks), never copy brand text or characters.
 - Prefer knowhow carousel ideas. Jobs are optional; ignore jobs unless guideline.jobPickEnabled and candidates exist.
-- Output exactly the requested number of ideas as structured JSON.
-- topicKey must be stable snake/dot ascii-ish keys (e.g. prep.before_quit.three_steps).
+- topicKey must be stable ascii keys with dots (e.g. prep.before_quit.three_steps). If unsure, derive from title.
 - Titles/summaries/hooks in Japanese unless guideline says otherwise.
 - Respect NG rules in the guideline.
+- jobId must be null when no job is attached. referenceIds may be [].
 
-Workflow:
+Required workflow:
 1) Call get_guideline, list_references, get_memory, get_previous_posts.
-2) Optionally get_candidate_jobs.
-3) Draft candidates; call check_duplicate for each topicKey/title and replace duplicates.
-4) Return final structured ideas.`,
+2) Optionally get_candidate_jobs. Call check_duplicate for each candidate topicKey and title.
+3) Call submit_ideas with exactly the requested number of ideas. If it returns ok: false, replace the rejected ideas and call submit_ideas again. Do not finish until it returns ok: true.
+4) Do not answer in free text — submit_ideas is your final output.`,
       tools: [
         get_guideline,
         list_references,
         get_memory,
         get_previous_posts,
         get_candidate_jobs,
-        check_duplicate
+        check_duplicate,
+        submit_ideas
       ],
-      outputType: ideationOutputSchema
+      toolUseBehavior: () =>
+        submission.value
+          ? {
+              isFinalOutput: true,
+              isInterrupted: undefined,
+              finalOutput: submission.value.summary
+            }
+          : { isFinalOutput: false, isInterrupted: undefined }
     });
 
     const userMessage = [
       `accountId: ${accountId}`,
       `Generate exactly ${input.count} Instagram carousel ideas.`,
+      `Then call submit_ideas with exactly ${input.count} ideas.`,
       input.seedText ? `Operator seed text:\n${input.seedText}` : "No seed text.",
-      input.seedUrl ? `Optional seed URL: ${input.seedUrl}` : "No seed URL."
+      input.seedUrl ? `Optional seed URL: ${input.seedUrl}` : "No seed URL.",
+      blocked.size > 0
+        ? `Already used topic keys and titles. Do not submit any of these:\n${[...blocked].slice(0, 120).join("\n")}`
+        : "No existing topics to avoid."
     ].join("\n\n");
 
-    const result = await run(agent, userMessage, { maxTurns: 12 });
-    const output = ideationOutputSchema.parse(result.finalOutput);
+    try {
+      await run(agent, userMessage, { maxTurns: 20 });
+    } catch (error) {
+      // If the model still produced a tool payload we captured, prefer that over a hard fail.
+      if (!submission.value) {
+        throw new Error(rejection ?? (error instanceof Error ? error.message : "Ideation agent failed"));
+      }
+    }
 
-    const ideas: IdeationCandidate[] = output.ideas.slice(0, input.count).map((idea, index) => ({
+    const submitted = submission.value;
+    if (!submitted) {
+      throw new Error(
+        rejection ?? "Ideation agent finished without a duplicate-free submit_ideas result. Retry the request."
+      );
+    }
+
+    const ideas: IdeationCandidate[] = submitted.ideas.slice(0, input.count).map((idea, index) => ({
       accountId,
-      title: idea.title,
-      summary: idea.summary,
-      pillar: idea.pillar,
-      topicKey: idea.topicKey || normalizeTopicKey(idea.title),
-      hook: idea.hook,
-      angle: idea.angle,
-      referenceIds: idea.referenceIds,
-      jobId: idea.jobId,
+      title: idea.title.trim(),
+      summary: idea.summary.trim(),
+      pillar: idea.pillar.trim() || "転職準備",
+      topicKey: (idea.topicKey || "").trim() || normalizeTopicKey(idea.title),
+      hook: idea.hook ?? "",
+      angle: idea.angle ?? "",
+      referenceIds: idea.referenceIds ?? [],
+      jobId: idea.jobId ?? null,
       status: "queued" as const,
       agentRunId: null,
       score: idea.score ?? 1 - index * 0.05,
-      rationale: idea.rationale
+      rationale: idea.rationale?.trim() || "Generated by OpenAI Agents"
     }));
 
-    if (ideas.length === 0) {
-      throw new Error("OpenAI Agents returned no ideas");
+    const { kept, skipped } = withoutDuplicateIdeas(ideas, blocked);
+    if (kept.length === 0) {
+      throw new Error("No new ideas could be generated (all candidates duplicate existing topics)");
     }
 
     return {
-      summary: output.summary,
-      ideas,
-      reasoning: [...output.reasoning, "mode=openai-agents"]
+      summary: submitted.summary,
+      ideas: kept,
+      reasoning: [
+        ...submitted.reasoning,
+        "mode=openai-agents",
+        "via=submit_ideas",
+        skipped.length > 0 ? `Dropped duplicates: ${skipped.join(" / ")}` : "No duplicates dropped"
+      ]
     };
   }
 }

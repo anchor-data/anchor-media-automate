@@ -148,29 +148,8 @@ export function createPhase1Seed() {
     }
   ];
 
-  const posts: Post[] = [
-    {
-      id: "post_001",
-      accountId: account.id,
-      title: "Sample draft (pre-ideation scaffold)",
-      caption: "プレースホルダー下書き。Phase 2以降でアイデアから生成します。",
-      status: "draft",
-      generationStatus: "ready",
-      createdAt: t,
-      updatedAt: t
-    }
-  ];
-
-  const assets: PostAsset[] = [
-    {
-      id: "asset_001",
-      postId: "post_001",
-      imageUrl: "https://images.example.com/post_001_1.png",
-      canvaDesignId: "design_001",
-      slideIndex: 0,
-      templateId: account.canvaTemplateId
-    }
-  ];
+  const posts: Post[] = [];
+  const assets: PostAsset[] = [];
 
   return { account, guideline, references, memory, ideas, jobs, posts, assets };
 }

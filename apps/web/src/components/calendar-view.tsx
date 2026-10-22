@@ -1,11 +1,33 @@
 "use client";
 
 import { useState } from "react";
+import type { Idea } from "@ama/shared";
 import { AccountSidebar } from "./account-sidebar";
 import { Icon } from "./icon";
 import { PostDetailPanel } from "./post-detail-panel";
 import { useWorkspace } from "./workspace-context";
 import { STATUS_LABEL, WEEKDAYS, type MockPost } from "../lib/mock-data";
+
+const IDEA_STATUS_LABEL: Record<Idea["status"], string> = {
+  queued: "アイデア",
+  selected: "採用済み",
+  rejected: "却下",
+  used: "使用済み"
+};
+
+function calendarDay(iso: string): number {
+  const date = new Date(iso);
+  const day = Number.isNaN(date.getTime()) ? 1 : date.getDate();
+  return Math.min(Math.max(day, 1), 28);
+}
+
+function formatCreatedAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "未定";
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}/${month}/${day}`;
+}
 
 type ViewMode = "calendar" | "list";
 
@@ -13,8 +35,14 @@ const WEEKS: readonly (readonly number[])[] = [0, 1, 2, 3].map((w) =>
   Array.from({ length: 7 }, (_, d) => w * 7 + d + 1)
 );
 
-function CalendarGrid({ posts }: { posts: readonly MockPost[] }) {
-  const { selectedPostId, selectPost } = useWorkspace();
+function CalendarGrid({
+  posts,
+  ideas
+}: {
+  posts: readonly MockPost[];
+  ideas: readonly Idea[];
+}) {
+  const { selectedPostId, selectedIdeaId, selectPost, selectIdea } = useWorkspace();
 
   return (
     <div className="cal">
@@ -29,6 +57,18 @@ function CalendarGrid({ posts }: { posts: readonly MockPost[] }) {
             {week.map((day) => (
               <div className="cal-day" key={day}>
                 <span>{day}</span>
+                {ideas
+                  .filter((idea) => calendarDay(idea.createdAt) === day)
+                  .map((idea) => (
+                    <button
+                      key={idea.id}
+                      className={`chip idea${idea.id === selectedIdeaId ? " selected" : ""}`}
+                      onClick={() => selectIdea(idea.id)}
+                    >
+                      <Icon name="lightbulb" size={12} />
+                      <span>{idea.title}</span>
+                    </button>
+                  ))}
                 {posts
                   .filter((p) => p.day === day)
                   .map((p) => (
@@ -50,8 +90,16 @@ function CalendarGrid({ posts }: { posts: readonly MockPost[] }) {
   );
 }
 
-function PostList({ posts, handle }: { posts: readonly MockPost[]; handle: string }) {
-  const { selectedPostId, selectPost } = useWorkspace();
+function PostList({
+  posts,
+  ideas,
+  handle
+}: {
+  posts: readonly MockPost[];
+  ideas: readonly Idea[];
+  handle: string;
+}) {
+  const { selectedPostId, selectedIdeaId, selectPost, selectIdea } = useWorkspace();
 
   return (
     <div className="table">
@@ -61,7 +109,34 @@ function PostList({ posts, handle }: { posts: readonly MockPost[]; handle: strin
         <span>予定日時</span>
         <span>アカウント</span>
       </div>
-      {posts.length === 0 ? <p className="empty">投稿がありません</p> : null}
+      {posts.length === 0 && ideas.length === 0 ? (
+        <p className="empty">投稿もアイデアもありません</p>
+      ) : null}
+      {ideas.map((idea) => (
+        <button
+          key={idea.id}
+          className={`trow${idea.id === selectedIdeaId ? " selected" : ""}`}
+          onClick={() => selectIdea(idea.id)}
+        >
+          <span className="row" style={{ gap: 12, minWidth: 0 }}>
+            <span className="thumb">
+              <Icon name="lightbulb" size={16} />
+            </span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {idea.title}
+            </span>
+          </span>
+          <span className="status">
+            <span className="dot idea" />
+            {IDEA_STATUS_LABEL[idea.status]}
+          </span>
+          <span className="muted">{formatCreatedAt(idea.createdAt)}</span>
+          <span className="row muted" style={{ gap: 6 }}>
+            <Icon name="instagram" size={14} />
+            {handle}
+          </span>
+        </button>
+      ))}
       {posts.map((p) => (
         <button
           key={p.id}
@@ -92,10 +167,11 @@ function PostList({ posts, handle }: { posts: readonly MockPost[]; handle: strin
 }
 
 export function CalendarView() {
-  const { posts, accounts, activeAccountId, openModal } = useWorkspace();
+  const { posts, ideas, accounts, activeAccountId, openModal } = useWorkspace();
   const [mode, setMode] = useState<ViewMode>("calendar");
 
   const accountPosts = posts.filter((p) => p.accountId === activeAccountId);
+  const accountIdeas = ideas.filter((idea) => idea.accountId === activeAccountId);
   const handle = accounts.find((a) => a.id === activeAccountId)?.handle ?? "";
 
   return (
@@ -130,9 +206,9 @@ export function CalendarView() {
           </button>
         </div>
         {mode === "calendar" ? (
-          <CalendarGrid posts={accountPosts} />
+          <CalendarGrid posts={accountPosts} ideas={accountIdeas} />
         ) : (
-          <PostList posts={accountPosts} handle={handle} />
+          <PostList posts={accountPosts} ideas={accountIdeas} handle={handle} />
         )}
       </main>
       <PostDetailPanel />

@@ -415,6 +415,7 @@ button {
   font-size: 12px;
   color: var(--text-secondary);
   min-height: 0;
+  overflow: auto;
 }
 
 .cal-day:nth-child(7n) {
@@ -448,6 +449,14 @@ button {
 
 .chip.published {
   border-top-color: var(--success);
+}
+
+.chip.idea {
+  border-top-color: #f59e0b;
+}
+
+.dot.idea {
+  background: #f59e0b;
 }
 
 .chip span {
@@ -1019,4 +1028,119 @@ button.trow:hover,
   font-size: 13px;
   z-index: 60;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* ---------- workflow steps (idea -> content -> schedule) ---------- */
+.steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.step + .step::before {
+  content: "";
+  flex: none;
+  width: 12px;
+  height: 1px;
+  margin-right: 4px;
+  background: var(--border);
+  transition: background 240ms ease;
+}
+
+.step.done + .step::before,
+.step.done + .step.current::before {
+  background: var(--success);
+}
+
+.step button,
+.step-static {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.step button:hover .step-label {
+  text-decoration: underline;
+}
+
+.step-dot {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  transition:
+    background 240ms ease,
+    border-color 240ms ease,
+    color 240ms ease;
+}
+
+.step-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.step.current .step-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.step.current .step-label {
+  color: inherit;
+  font-weight: 600;
+}
+
+.step.done .step-dot {
+  background: var(--success);
+  border-color: var(--success);
+  color: #fff;
+}
+
+.panel-body > * {
+  animation: panel-rise 280ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.link-card {
+  text-align: left;
+  width: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-body > *,
+  .step-dot,
+  .step + .step::before {
+    animation: none;
+    transition: none;
+  }
 }
