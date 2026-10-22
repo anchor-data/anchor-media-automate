@@ -127,7 +127,8 @@ function mapApiPost(post: Post, ideaTarget: string): MockPost {
           : (post.status as MockPost["status"]),
     day: dayFromIso(post.scheduledAt ?? post.createdAt),
     scheduledAt: post.scheduledAt ?? null,
-    ideaTarget
+    ideaTarget,
+    ideaId: post.ideaId
   };
 }
 
@@ -310,10 +311,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           status: "draft",
           day: new Date().getDate(),
           scheduledAt: null,
-          ideaTarget: accounts.find((a) => a.id === activeAccountId)?.target ?? ""
+          ideaTarget: accounts.find((a) => a.id === activeAccountId)?.target ?? "",
+          ideaId: idea.id
         };
         setPosts((prev) => [...prev, draft]);
+        setSelectedIdeaId(null);
         setSelectedPostId(id);
+        setIdeas((prev) =>
+          prev.map((item) => (item.id === idea.id ? { ...item, status: "selected" } : item))
+        );
         if (apiReady) {
           void patchIdea(idea.id, { status: "selected" })
             .then((updated) => {

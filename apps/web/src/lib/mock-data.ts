@@ -9,6 +9,7 @@ export interface MockPost {
   readonly day: number;
   readonly scheduledAt: string | null;
   readonly ideaTarget: string;
+  readonly ideaId?: string;
 }
 
 export interface MockAccount {
