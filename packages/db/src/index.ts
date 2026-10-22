@@ -52,10 +52,18 @@ export interface Repository {
       rejectReason?: string | null;
       slidesJson?: unknown;
       hashtags?: string[];
+      postType?: Post["postType"];
     }
   ): Promise<Post | null>;
   setPostStatus(postId: string, status: PostStatus): Promise<Post | null>;
   createAgentRun(run: AgentRun): Promise<void>;
+  /** Swap all slide assets of a post for a fresh render. */
+  replacePostAssets(postId: string, assets: DraftInput["assets"]): Promise<PostAsset[]>;
+
+  getCanvaRefreshToken(): Promise<string | null>;
+  saveCanvaRefreshToken(token: string): Promise<void>;
+  getCachedDesignPages(designId: string, maxAgeMs: number): Promise<string[] | null>;
+  saveCachedDesignPages(designId: string, urls: string[]): Promise<void>;
 
   getActiveGuideline(accountId: string): Promise<Guideline | null>;
   upsertGuideline(accountId: string, input: GuidelineUpsert): Promise<Guideline>;
@@ -191,6 +199,7 @@ class MockRepository implements Repository {
       rejectReason?: string | null;
       slidesJson?: unknown;
       hashtags?: string[];
+      postType?: Post["postType"];
     }
   ) {
     const post = this.posts.find((p) => p.id === postId);
@@ -204,11 +213,40 @@ class MockRepository implements Repository {
     if (fields.rejectReason !== undefined) post.rejectReason = fields.rejectReason;
     if (fields.slidesJson !== undefined) post.slidesJson = fields.slidesJson;
     if (fields.hashtags !== undefined) post.hashtags = fields.hashtags;
+    if (fields.postType !== undefined) post.postType = fields.postType;
     post.updatedAt = nowIso();
     return post;
   }
   async createAgentRun(run: AgentRun) {
     this.agentRuns.push(run);
+  }
+  async replacePostAssets(postId: string, assets: DraftInput["assets"]) {
+    const next = assets.map((asset, index) => ({
+      id: id("asset"),
+      postId,
+      imageUrl: asset.imageUrl,
+      canvaDesignId: asset.canvaDesignId,
+      slideIndex: asset.slideIndex ?? index,
+      templateId: asset.templateId
+    }));
+    this.assets = [...this.assets.filter((a) => a.postId !== postId), ...next];
+    return next;
+  }
+
+  private canvaRefreshToken: string | null = null;
+  private designCache = new Map<string, { urls: string[]; savedAt: number }>();
+  async getCanvaRefreshToken() {
+    return this.canvaRefreshToken;
+  }
+  async saveCanvaRefreshToken(token: string) {
+    this.canvaRefreshToken = token;
+  }
+  async getCachedDesignPages(designId: string, maxAgeMs: number) {
+    const hit = this.designCache.get(designId);
+    return hit && Date.now() - hit.savedAt <= maxAgeMs ? hit.urls : null;
+  }
+  async saveCachedDesignPages(designId: string, urls: string[]) {
+    this.designCache.set(designId, { urls, savedAt: Date.now() });
   }
 
   async getActiveGuideline(accountId: string) {
@@ -516,6 +554,7 @@ class TursoRepository implements Repository {
       rejectReason?: string | null;
       slidesJson?: unknown;
       hashtags?: string[];
+      postType?: Post["postType"];
     }
   ) {
     const current = await this.getPost(postId);
@@ -525,7 +564,7 @@ class TursoRepository implements Repository {
       sql: `UPDATE posts SET
               title = ?, caption = ?, status = ?, scheduled_at = ?,
               generation_status = ?, generation_error = ?, reject_reason = ?,
-              slides_json = ?, hashtags_json = ?, updated_at = ?
+              slides_json = ?, hashtags_json = ?, post_type = ?, updated_at = ?
             WHERE id = ?`,
       args: [
         fields.title ?? p.title,
@@ -541,6 +580,7 @@ class TursoRepository implements Repository {
             ? JSON.stringify(p.slidesJson)
             : null,
         JSON.stringify(fields.hashtags ?? p.hashtags ?? []),
+        fields.postType ?? p.postType ?? null,
         nowIso(),
         postId
       ]
@@ -551,6 +591,63 @@ class TursoRepository implements Repository {
 
   async setPostStatus(postId: string, status: PostStatus) {
     return this.updatePost(postId, { status });
+  }
+
+  async replacePostAssets(postId: string, assets: DraftInput["assets"]) {
+    await this.client.batch(
+      [
+        { sql: "DELETE FROM post_assets WHERE post_id = ?", args: [postId] },
+        ...assets.map((asset, index) => ({
+          sql: `INSERT INTO post_assets (id, post_id, image_url, canva_design_id, slide_index, template_id)
+                VALUES (?, ?, ?, ?, ?, ?)`,
+          args: [
+            id("asset"),
+            postId,
+            asset.imageUrl,
+            asset.canvaDesignId ?? null,
+            asset.slideIndex ?? index,
+            asset.templateId ?? null
+          ]
+        }))
+      ],
+      "write"
+    );
+    return (await this.getPost(postId))?.assets ?? [];
+  }
+
+  async getCanvaRefreshToken() {
+    const result = await this.client.execute("SELECT refresh_token FROM canva_tokens WHERE id = 1");
+    const row = result.rows[0];
+    return row ? String(row.refresh_token) : null;
+  }
+
+  async saveCanvaRefreshToken(token: string) {
+    await this.client.execute({
+      sql: `INSERT INTO canva_tokens (id, refresh_token, updated_at) VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET refresh_token = excluded.refresh_token, updated_at = excluded.updated_at`,
+      args: [token, nowIso()]
+    });
+  }
+
+  async getCachedDesignPages(designId: string, maxAgeMs: number) {
+    const result = await this.client.execute({
+      sql: "SELECT page_urls_json, updated_at FROM canva_design_cache WHERE design_id = ?",
+      args: [designId]
+    });
+    const row = result.rows[0];
+    if (!row) return null;
+    if (Date.now() - Date.parse(String(row.updated_at)) > maxAgeMs) return null;
+    const urls = parseJsonArray(row.page_urls_json);
+    return urls.length > 0 ? urls : null;
+  }
+
+  async saveCachedDesignPages(designId: string, urls: string[]) {
+    await this.client.execute({
+      sql: `INSERT INTO canva_design_cache (design_id, page_urls_json, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(design_id) DO UPDATE SET
+              page_urls_json = excluded.page_urls_json, updated_at = excluded.updated_at`,
+      args: [designId, JSON.stringify(urls), nowIso()]
+    });
   }
 
   async createAgentRun(run: AgentRun) {

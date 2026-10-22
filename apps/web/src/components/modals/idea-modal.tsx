@@ -38,7 +38,7 @@ export function IdeaModal() {
               onClick={() => {
                 if (!selected) return;
                 addDraftFromIdea(selected);
-                notify("下書きを作成しました（画像生成は Phase 3）");
+                notify(apiReady ? "コンテンツの生成を開始しました" : "下書きを作成しました（オフライン）");
                 closeModal();
               }}
             >

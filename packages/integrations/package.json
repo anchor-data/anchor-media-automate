@@ -8,7 +8,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@ama/shared": "workspace:*",
@@ -16,6 +17,7 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.7"
   }
 }

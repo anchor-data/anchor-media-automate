@@ -6,6 +6,7 @@ import type {
   Job,
   MemoryItem,
   Post,
+  PostAsset,
   Reference,
   ReferenceCreate
 } from "@ama/shared";
@@ -128,6 +129,39 @@ export async function patchIdea(
 
 export async function approvePost(postId: string) {
   return request<{ item: Post }>(`/posts/${postId}/approve`, { method: "POST" });
+}
+
+export type PostDetail = { post: Post; assets: PostAsset[] };
+
+export async function getPostDetail(postId: string) {
+  return request<PostDetail>(`/posts/${postId}`);
+}
+
+/** Starts agent + Canva render in the background; poll getPostDetail until generationStatus is ready/failed. */
+export async function createContent(ideaId: string) {
+  return request<{ item: Post }>(`/ideas/${ideaId}/create`, { method: "POST" });
+}
+
+export async function regeneratePost(postId: string, feedback?: string) {
+  return request<{ item: Post }>(`/posts/${postId}/regenerate`, {
+    method: "POST",
+    body: JSON.stringify({ feedback })
+  });
+}
+
+/** `reexport` refreshes expired preview URLs without re-running Canva autofill. */
+export async function renderPost(postId: string, reexport: boolean) {
+  return request<PostDetail>(`/posts/${postId}/render`, {
+    method: "POST",
+    body: JSON.stringify({ reexport })
+  });
+}
+
+export async function schedulePost(postId: string, scheduledAt: string) {
+  return request<{ item: Post }>(`/posts/${postId}/schedule`, {
+    method: "POST",
+    body: JSON.stringify({ scheduledAt })
+  });
 }
 
 export type DashboardBundle = {

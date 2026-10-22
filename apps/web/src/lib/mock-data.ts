@@ -1,3 +1,5 @@
+import type { GenerationStatus } from "@ama/shared";
+
 export type PostStatus = "draft" | "scheduled" | "published";
 
 export interface MockPost {
@@ -10,6 +12,11 @@ export interface MockPost {
   readonly scheduledAt: string | null;
   readonly ideaTarget: string;
   readonly ideaId?: string;
+  /** Set for API posts; absent for offline mock drafts. */
+  readonly generationStatus?: GenerationStatus;
+  readonly generationError?: string | null;
+  /** Slide image URLs in page order; undefined until loaded from the API. */
+  readonly assetUrls?: readonly string[];
 }
 
 export interface MockAccount {

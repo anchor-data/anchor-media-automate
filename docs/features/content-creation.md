@@ -83,15 +83,25 @@ Mock mode uses placeholder URLs; dashboard may show HTML preview from `slides_js
 | Reject + reason | status=`rejected`; write `idea_rejected` |
 | Schedule | status=`scheduled` + `scheduled_at` (from approved only) |
 
-## API (planned)
+## API
 
-- `POST /ideas/:id/create` → 202, poll `GET /posts/:id`
-- `PATCH /posts/:id` (slides, caption, scheduledAt)
-- `POST /posts/:id/regenerate`
-- `POST /posts/:id/render`
-- `POST /posts/:id/approve`
-- `POST /posts/:id/reject`
-- `POST /posts/:id/schedule`
+- `POST /ideas/:id/create` → 202, poll `GET /posts/:id` (`generationStatus`)
+- `PATCH /posts/:id` (title, caption, hashtags, slides; draft only; edited slides set `generationStatus=pending` until re-rendered)
+- `POST /posts/:id/regenerate` `{ feedback? }` → 202 (whole deck; per-slide regenerate not yet)
+- `POST /posts/:id/render` `{ reexport? }` — `reexport: true` skips autofill and re-exports the stored design
+- `POST /posts/:id/approve` (draft + ready only; writes `topic_used` / `hook_used`, idea → `used`)
+- `POST /posts/:id/reject` `{ reason }` (writes `idea_rejected`, idea → `rejected`)
+- `POST /posts/:id/schedule` `{ scheduledAt }` (approved only; no Instagram call)
+
+## Canva setup (ported from marketing-automation-tools/tiktok_dashboard)
+
+Canva rotates the refresh token on every exchange, so it is stored in the `canva_tokens` table, not env.
+
+1. Apply the schema: `pnpm --filter @ama/db setup:turso` (adds `canva_tokens`, `canva_design_cache`)
+2. Set `CANVA_CLIENT_ID` / `CANVA_CLIENT_SECRET` in the repo-root `.env`, then run `pnpm --filter @ama/db canva:bootstrap` once
+3. Set the same client id/secret on the API worker. `CANVA_REFRESH_TOKEN` is an optional seed only
+
+Export page URLs are cached for 1h in `canva_design_cache`; the design id on `post_assets` stays the source of truth.
 
 ## Acceptance criteria
 
