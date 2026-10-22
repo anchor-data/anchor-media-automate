@@ -1,5 +1,7 @@
 import { slideFieldsSchema } from "@ama/shared";
+import { buildDraftPdf } from "./draft-pdf";
 import { NotConfiguredError } from "./errors";
+import type { TemplateStructure } from "./template-structure";
 
 /**
  * Canva Connect client. Ported from marketing-automation-tools/tiktok_dashboard/canva_connect.py.
@@ -54,7 +56,19 @@ export interface CanvaClient {
   listBrandTemplates(): Promise<CanvaBrandTemplate[]>;
   /** Names of the autofill data fields defined on a brand template. */
   getTemplateFieldNames(templateId: string): Promise<string[]>;
+  /**
+   * 4:5 design a human finishes in Canva (lay it out, tag the autofill fields, publish as a brand
+   * template). With a `structure` it has one page per structure page (imported from a generated
+   * PDF); without one it is a single blank page. The Connect API cannot add elements or publish
+   * templates, so this is the furthest the app can go on its own.
+   */
+  createDraftDesign(input: { title: string; structure?: TemplateStructure }): Promise<CanvaDraftDesign>;
 }
+
+export type CanvaDraftDesign = { designId: string; editUrl: string };
+
+export const TEMPLATE_PAGE_WIDTH = 1080;
+export const TEMPLATE_PAGE_HEIGHT = 1350;
 
 /** Autofill `data` payload: every field is a Canva text data field. */
 export function toAutofillData(
@@ -105,7 +119,21 @@ export class MockCanvaClient implements CanvaClient {
   async getTemplateFieldNames() {
     return [...REQUIRED_TEMPLATE_FIELDS];
   }
+  async createDraftDesign(input: { title: string; structure?: TemplateStructure }) {
+    const designId = `draft_${input.title.replace(/\W+/g, "_")}`;
+    return { designId, editUrl: `https://www.canva.com/design/${designId}/edit` };
+  }
 }
+
+/**
+ * Access token and in-flight refresh. Canva refresh tokens are single use, so every client built
+ * in the same process must share one of these; separate clients would each exchange the same
+ * stored token and Canva would revoke the whole lineage.
+ */
+export type CanvaSharedState = {
+  accessToken?: { value: string; expiresAt: number };
+  refreshing?: Promise<string>;
+};
 
 export type CanvaCredentials = {
   clientId?: string;
@@ -114,6 +142,8 @@ export type CanvaCredentials = {
   seedRefreshToken?: string;
   tokenStore?: CanvaTokenStore;
   designCache?: CanvaDesignCache;
+  /** Defaults to private state; pass the same object to every client in a process. */
+  shared?: CanvaSharedState;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -128,16 +158,29 @@ type CanvaJob = {
   };
 };
 
+type CanvaImportJob = {
+  job: {
+    id: string;
+    status: "in_progress" | "success" | "failed";
+    result?: { designs?: Array<{ id: string; urls?: { edit_url?: string } }> };
+    error?: { message?: string };
+  };
+};
+
+function toBase64(text: string): string {
+  return btoa(Array.from(new TextEncoder().encode(text), (byte) => String.fromCharCode(byte)).join(""));
+}
+
 type TokenResponse = { access_token: string; expires_in?: number; refresh_token?: string };
 
 export class CanvaApiClient implements CanvaClient {
   mode: "canva" = "canva";
-  private accessToken?: { value: string; expiresAt: number };
-  private refreshing?: Promise<string>;
+  private readonly state: CanvaSharedState;
   private readonly fetchImpl: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(private readonly credentials: CanvaCredentials) {
+    this.state = credentials.shared ?? {};
     this.fetchImpl = credentials.fetchImpl ?? ((input, init) => fetch(input, init));
     this.sleep = credentials.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
@@ -219,7 +262,41 @@ export class CanvaApiClient implements CanvaClient {
     return Object.keys(response.dataset ?? {});
   }
 
-  private async poll(path: string, initial: CanvaJob): Promise<CanvaJob> {
+  async createDraftDesign(input: { title: string; structure?: TemplateStructure }): Promise<CanvaDraftDesign> {
+    if (input.structure) return this.importDraftPdf(input.title, input.structure);
+    const response = await this.request<{
+      design?: { id?: string; urls?: { edit_url?: string } };
+    }>("POST", "/designs", {
+      design_type: { type: "custom", width: TEMPLATE_PAGE_WIDTH, height: TEMPLATE_PAGE_HEIGHT },
+      title: input.title
+    });
+    const designId = response.design?.id;
+    if (!designId) {
+      throw new Error("Canva created the draft without a design id");
+    }
+    return {
+      designId,
+      editUrl: response.design?.urls?.edit_url ?? `https://www.canva.com/design/${designId}/edit`
+    };
+  }
+
+  private async importDraftPdf(title: string, structure: TemplateStructure): Promise<CanvaDraftDesign> {
+    const created = await this.request<CanvaImportJob>("POST", "/imports", await buildDraftPdf(structure), {
+      "Content-Type": "application/octet-stream",
+      "Import-Metadata": JSON.stringify({ title_base64: toBase64(title), mime_type: "application/pdf" })
+    });
+    const done = await this.poll(`/imports/${created.job.id}`, created);
+    const design = done.job.result?.designs?.[0];
+    if (!design?.id) {
+      throw new Error("Canva import finished without a design id");
+    }
+    return {
+      designId: design.id,
+      editUrl: design.urls?.edit_url ?? `https://www.canva.com/design/${design.id}/edit`
+    };
+  }
+
+  private async poll<T extends Pick<CanvaJob, "job"> | CanvaImportJob>(path: string, initial: T): Promise<T> {
     let current = initial;
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
       if (current.job.status === "success") return current;
@@ -227,20 +304,21 @@ export class CanvaApiClient implements CanvaClient {
         throw new Error(`Canva job failed: ${current.job.error?.message ?? "unknown error"}`);
       }
       await this.sleep(POLL_INTERVAL_MS);
-      current = await this.request<CanvaJob>("GET", path);
+      current = await this.request<T>("GET", path);
     }
     throw new Error("Canva job timed out");
   }
 
   private getAccessToken(): Promise<string> {
-    if (this.accessToken && this.accessToken.expiresAt - Date.now() > TOKEN_EXPIRY_MARGIN_MS) {
-      return Promise.resolve(this.accessToken.value);
+    const { accessToken } = this.state;
+    if (accessToken && accessToken.expiresAt - Date.now() > TOKEN_EXPIRY_MARGIN_MS) {
+      return Promise.resolve(accessToken.value);
     }
     // One refresh at a time: a second concurrent exchange would use an already-revoked token.
-    this.refreshing ??= this.refreshAccessToken().finally(() => {
-      this.refreshing = undefined;
+    this.state.refreshing ??= this.refreshAccessToken().finally(() => {
+      this.state.refreshing = undefined;
     });
-    return this.refreshing;
+    return this.state.refreshing;
   }
 
   private async refreshAccessToken(): Promise<string> {
@@ -248,19 +326,21 @@ export class CanvaApiClient implements CanvaClient {
     if (!clientId || !clientSecret || !tokenStore) {
       throw new NotConfiguredError("Canva API");
     }
-    const refreshToken = (await tokenStore.load()) ?? seedRefreshToken;
+    let refreshToken = (await tokenStore.load()) ?? seedRefreshToken;
     if (!refreshToken) {
       throw new NotConfiguredError("Canva refresh token (run the OAuth bootstrap script)");
     }
 
-    const response = await this.fetchImpl(`${CANVA_BASE_URL}/oauth/token`, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken })
-    });
+    let response = await this.exchangeRefreshToken(clientId, clientSecret, refreshToken);
+    if (response.status === 400) {
+      // Another process (e.g. a second worker isolate) may have spent this token and stored its
+      // successor. Use that once; if the stored token is unchanged the lineage really is dead.
+      const latest = await tokenStore.load();
+      if (latest && latest !== refreshToken) {
+        refreshToken = latest;
+        response = await this.exchangeRefreshToken(clientId, clientSecret, refreshToken);
+      }
+    }
     if (!response.ok) {
       throw new Error(`Canva token refresh failed (${response.status}): ${await response.text()}`);
     }
@@ -276,22 +356,41 @@ export class CanvaApiClient implements CanvaClient {
         throw new Error(`Got a Canva access token but failed to persist the rotated refresh token: ${reason}`);
       }
     }
-    this.accessToken = {
+    this.state.accessToken = {
       value: data.access_token,
       expiresAt: Date.now() + (data.expires_in ?? 3600) * 1000
     };
     return data.access_token;
   }
 
-  private async request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  private exchangeRefreshToken(clientId: string, clientSecret: string, refreshToken: string): Promise<Response> {
+    return this.fetchImpl(`${CANVA_BASE_URL}/oauth/token`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken })
+    });
+  }
+
+  /** JSON body by default; pass `headers` with a `Uint8Array` body for binary uploads (imports). */
+  private async request<T>(
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    headers?: Readonly<Record<string, string>>
+  ): Promise<T> {
     const token = await this.getAccessToken();
+    const binary = body instanceof Uint8Array;
     const response = await this.fetchImpl(`${CANVA_BASE_URL}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${token}`,
-        ...(body ? { "Content-Type": "application/json" } : {})
+        ...(body && !binary ? { "Content-Type": "application/json" } : {}),
+        ...headers
       },
-      body: body ? JSON.stringify(body) : undefined
+      body: body ? (binary ? new Uint8Array(body) : JSON.stringify(body)) : undefined
     });
     if (!response.ok) {
       throw new Error(`Canva ${method} ${path} failed (${response.status}): ${await response.text()}`);
@@ -308,10 +407,22 @@ export type CanvaClientOptions = {
   canvaDesignCache?: CanvaDesignCache;
 };
 
+/** One per client id for the life of the process, so per-request clients never refresh in parallel. */
+const sharedStateByClientId = new Map<string, CanvaSharedState>();
+
+function sharedStateFor(clientId: string): CanvaSharedState {
+  const existing = sharedStateByClientId.get(clientId);
+  if (existing) return existing;
+  const created: CanvaSharedState = {};
+  sharedStateByClientId.set(clientId, created);
+  return created;
+}
+
 /** Live client only when credentials AND a token store exist; otherwise the mock. */
 export function createCanvaClient(options: CanvaClientOptions): CanvaClient {
   if (options.canvaClientId && options.canvaClientSecret && options.canvaTokenStore) {
     return new CanvaApiClient({
+      shared: sharedStateFor(options.canvaClientId),
       clientId: options.canvaClientId,
       clientSecret: options.canvaClientSecret,
       seedRefreshToken: options.canvaRefreshToken,

@@ -46,6 +46,23 @@ Canva rotates the refresh token on every use, so the live token lives in the `ca
 
 ## B. Build the brand template (per account, or share one)
 
+### Start from a reference account (optional)
+
+In **アカウント追加 → Canvaテンプレート → 参考アカウントから新しいテンプレートを作成**:
+
+1. Enter the reference Instagram profile link (`https://www.instagram.com/<handle>` or `@handle`).
+2. Upload screenshots of **one** reference carousel, in slide order (up to 10). Instagram cannot be read by the server, so the screenshots are what define the structure: a vision model (`gpt-4.1`, needs `OPENAI_API_KEY`) returns the page count, each page's role and its text boxes. Without screenshots or a key, the standard 8-page deck is used.
+3. Optionally add asset URLs (logo, photos) and style notes. They are written into the brief; they are not uploaded to Canva.
+4. **Canvaに下書きを作成** (`POST /canva/template-drafts`) imports a generated PDF into Canva as a **multi-page 1080×1350 design**, one page per inferred slide, each listing its field names. The response carries the edit link, a markdown brief and the inferred structure.
+5. In Canva, lay the pages out in the reference style, then continue with the steps below (tag the fields, publish).
+6. Back in the modal press **公開したので一覧を更新**, pick the new template, and add the account. The template id is stored on the account (`canva_template_id`) exactly as in section D.
+
+The Canva Connect API cannot add elements, name autofill fields or publish a brand template, so steps 5-6 stay manual.
+
+**Limit:** account creation (`checkTemplate`) and the creation agent still require the fixed 21-field, 8-page contract. A draft inferred with a different page count can be built in Canva, but it will be rejected when linked until `slideFieldsSchema` and the creation agent accept variable structures.
+
+### Build it in Canva
+
 Spec: [features/canva-template-spec.md](features/canva-template-spec.md). In short:
 
 1. Create an **8-page, 1080×1350 (4:5)** design.

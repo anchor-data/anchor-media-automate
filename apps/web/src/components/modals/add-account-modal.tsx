@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CanvaTemplateSelect } from "../canva-template-select";
 import { Icon } from "../icon";
+import { TemplateDraftPanel } from "../template-draft-panel";
 import { useWorkspace } from "../workspace-context";
 import { SCHEDULE_OPTIONS } from "../../lib/mock-data";
 import { Modal } from "./modal";
@@ -17,6 +18,7 @@ export function AddAccountModal() {
   const [connected, setConnected] = useState(false);
   const [templateId, setTemplateId] = useState("");
   const [saving, setSaving] = useState(false);
+  const [templateListKey, setTemplateListKey] = useState(0);
 
   const canSubmit = handle.trim().length > 0 && (!apiReady || templateId !== "") && !saving;
 
@@ -78,8 +80,17 @@ export function AddAccountModal() {
           {apiReady ? (
             <div className="tile stack gap-8">
               <span className="label">Canvaテンプレート</span>
-              <CanvaTemplateSelect value={templateId} onChange={setTemplateId} disabled={saving} />
+              <CanvaTemplateSelect
+                key={templateListKey}
+                value={templateId}
+                onChange={setTemplateId}
+                disabled={saving}
+              />
               <span className="muted small">s1_title〜s8_cta の21項目を持つブランドテンプレートを選択</span>
+              <TemplateDraftPanel
+                disabled={saving}
+                onRefreshTemplates={() => setTemplateListKey((key) => key + 1)}
+              />
             </div>
           ) : null}
           <div className="tile">

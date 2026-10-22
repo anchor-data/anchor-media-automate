@@ -22,12 +22,29 @@ export {
   resolveCanvaDesignId,
   toAutofillData,
   type CanvaBrandTemplate,
+  type CanvaDraftDesign,
+  type CanvaSharedState,
   type CanvaClient,
   type CanvaClientOptions,
   type CanvaDesignCache,
   type CanvaThumbnail,
   type CanvaTokenStore
 } from "./canva";
+export { buildDraftPdf } from "./draft-pdf";
+export {
+  DEFAULT_TEMPLATE_STRUCTURE,
+  inferTemplateStructure,
+  parseTemplateStructure,
+  structureFieldNames,
+  type TemplateStructure
+} from "./template-structure";
+export {
+  buildTemplateBrief,
+  parseInstagramHandle,
+  type TemplateBrief,
+  type TemplateBriefInput,
+  type TemplateBriefPage
+} from "./template-brief";
 export {
   MockCreationAgent,
   OpenAICreationAgent,

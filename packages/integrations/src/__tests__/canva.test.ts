@@ -8,6 +8,7 @@ import {
   type CanvaDesignCache,
   type CanvaTokenStore
 } from "../canva";
+import { DEFAULT_TEMPLATE_STRUCTURE } from "../template-structure";
 
 function memoryStore(initial: string | null): CanvaTokenStore & { current: () => string | null } {
   let token = initial;
@@ -125,6 +126,67 @@ describe("CanvaApiClient token handling", () => {
     });
     await Promise.all([client.getThumbnail("D1"), client.getThumbnail("D1"), client.getThumbnail("D1")]);
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith("/oauth/token"))).toHaveLength(1);
+  });
+
+  it("shares one refresh across separate clients that share state", async () => {
+    const store = memoryStore("rt");
+    const shared = {};
+    const fetchImpl = routedFetch({
+      "/oauth/token": () => json({ access_token: "at", refresh_token: "rt2" }),
+      "/designs/D1": () => json({ design: {} })
+    });
+    const make = () =>
+      new CanvaApiClient({
+        clientId: "id",
+        clientSecret: "secret",
+        tokenStore: store,
+        shared,
+        fetchImpl: fetchImpl as unknown as typeof fetch
+      });
+    await Promise.all([make().getThumbnail("D1"), make().getThumbnail("D1"), make().getThumbnail("D1")]);
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith("/oauth/token"))).toHaveLength(1);
+  });
+
+  it("retries with the newer stored token when another process already rotated it", async () => {
+    const store = memoryStore("rt_old");
+    const used: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/oauth/token")) {
+        const token = (init?.body as URLSearchParams).get("refresh_token") ?? "";
+        used.push(token);
+        if (token === "rt_old") {
+          await store.save("rt_new"); // a concurrent request rotated it first
+          return json({ error: "invalid_grant", error_description: "Refresh token used twice" }, 400);
+        }
+        return json({ access_token: "at", refresh_token: "rt_next" });
+      }
+      return json({ design: {} });
+    });
+    const client = new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: store,
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+    await client.getThumbnail("D1");
+    expect(used).toEqual(["rt_old", "rt_new"]);
+    expect(store.current()).toBe("rt_next");
+  });
+
+  it("does not retry when the stored token is unchanged", async () => {
+    const store = memoryStore("rt_dead");
+    const fetchImpl = routedFetch({
+      "/oauth/token": () => json({ error: "invalid_grant", error_description: "Token lineage has been revoked" }, 400)
+    });
+    const client = new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: store,
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+    await expect(client.getThumbnail("D1")).rejects.toThrow(/lineage has been revoked/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("fails loudly when the rotated token cannot be persisted", async () => {
@@ -270,5 +332,81 @@ describe("brand templates", () => {
       "/brand-templates/T1/dataset": () => json({ dataset: { s1_title: { type: "text" }, s1_sub: { type: "text" } } })
     }).getTemplateFieldNames("T1");
     expect(names).toEqual(["s1_title", "s1_sub"]);
+  });
+
+  it("creates a blank 1080x1350 draft design", async () => {
+    let sent: unknown;
+    const draft = await client({
+      "/designs": (init) => {
+        sent = JSON.parse(String(init?.body));
+        return json({ design: { id: "D9", urls: { edit_url: "https://canva.com/edit/D9" } } });
+      }
+    }).createDraftDesign({ title: "wakaru template" });
+    expect(sent).toEqual({
+      design_type: { type: "custom", width: 1080, height: 1350 },
+      title: "wakaru template"
+    });
+    expect(draft).toEqual({ designId: "D9", editUrl: "https://canva.com/edit/D9" });
+  });
+
+  it("fails when Canva returns no design id", async () => {
+    await expect(client({ "/designs": () => json({ design: {} }) }).createDraftDesign({ title: "x" })).rejects.toThrow(
+      /design id/
+    );
+  });
+
+  it("imports a multi-page pdf when a structure is given", async () => {
+    let metadata: string | null = null;
+    let contentType: string | null = null;
+    let bodyBytes = 0;
+    const importing = new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: memoryStore("rt"),
+      sleep: noSleep,
+      fetchImpl: routedFetch({
+        ...tokenRoute,
+        "/imports": (init) => {
+          const headers = init?.headers as Record<string, string>;
+          metadata = headers["Import-Metadata"] ?? null;
+          contentType = headers["Content-Type"] ?? null;
+          bodyBytes = (init?.body as Uint8Array).byteLength;
+          return json({ job: { id: "J1", status: "in_progress" } });
+        },
+        "/imports/J1": () =>
+          json({
+            job: {
+              id: "J1",
+              status: "success",
+              result: { designs: [{ id: "D7", urls: { edit_url: "https://canva.com/edit/D7" } }] }
+            }
+          })
+      }) as unknown as typeof fetch
+    });
+
+    const draft = await importing.createDraftDesign({ title: "wakaru", structure: DEFAULT_TEMPLATE_STRUCTURE });
+
+    expect(draft).toEqual({ designId: "D7", editUrl: "https://canva.com/edit/D7" });
+    expect(contentType).toBe("application/octet-stream");
+    expect(bodyBytes).toBeGreaterThan(100);
+    const decoded = JSON.parse(metadata ?? "") as { title_base64: string; mime_type: string };
+    expect(decoded.mime_type).toBe("application/pdf");
+    expect(atob(decoded.title_base64)).toBe("wakaru");
+  });
+
+  it("fails when the import job fails", async () => {
+    const importing = new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: memoryStore("rt"),
+      sleep: noSleep,
+      fetchImpl: routedFetch({
+        ...tokenRoute,
+        "/imports": () => json({ job: { id: "J2", status: "failed", error: { message: "bad pdf" } } })
+      }) as unknown as typeof fetch
+    });
+    await expect(
+      importing.createDraftDesign({ title: "x", structure: DEFAULT_TEMPLATE_STRUCTURE })
+    ).rejects.toThrow(/bad pdf/);
   });
 });

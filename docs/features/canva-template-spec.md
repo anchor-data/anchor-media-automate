@@ -43,6 +43,18 @@ Optional footer text (handle, page numbers) can be static in the Canva design ra
 }
 ```
 
+## Draft generation (new accounts)
+
+`POST /canva/template-drafts` body: `referenceUrl`, `screenshots[]` (image data URLs / https), `assetUrls[]`, `styleNotes`.
+
+- `referenceUrl` must be an Instagram profile link or `@handle` (post, reel and story links are rejected).
+- Structure: `inferTemplateStructure` reads the screenshots with a vision model and returns pages of `{ title, purpose, fields[{ name, maxChars }] }`. Field names are `s{page}_{kind}` with kind one of `title | sub | head | body | num | label | cta`. Max 10 pages; names must be unique. No key or no screenshots → `DEFAULT_TEMPLATE_STRUCTURE` (the 8 pages / 21 fields above).
+- Draft: `buildDraftPdf` makes one 1080×1350 page per structure page; `POST /v1/imports` creates the Canva design (scope `design:content:write`). With no structure a blank custom-size design is created instead.
+- Response: `{ draft: { designId, editUrl }, brief, structure, mode }`.
+- Needs a human afterwards: layout, field tagging, publishing as a brand template.
+
+Not verified against live Canva yet: the PDF import path is covered by unit tests with a faked `fetch`, so run one real draft before relying on it.
+
 ## Export
 
 - Format: PNG

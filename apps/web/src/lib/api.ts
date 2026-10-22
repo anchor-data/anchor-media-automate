@@ -137,6 +137,25 @@ export async function listBrandTemplates() {
   return request<{ items: BrandTemplate[]; mode: string }>("/canva/brand-templates");
 }
 
+export type TemplateDraftInput = {
+  referenceUrl: string;
+  assetUrls: string[];
+  styleNotes: string;
+  /** Slides of one reference carousel, in order (image data URLs). */
+  screenshots: string[];
+};
+
+export type TemplateDraft = {
+  draft: { designId: string; editUrl: string };
+  brief: { referenceHandle: string | null; markdown: string; pages: Array<{ page: number; title: string }> };
+  mode: string;
+};
+
+/** Creates the multi-page Canva draft; the user tags and publishes it in Canva afterwards. */
+export async function createTemplateDraft(body: TemplateDraftInput) {
+  return request<TemplateDraft>("/canva/template-drafts", { method: "POST", body: JSON.stringify(body) });
+}
+
 export async function createAccountApi(body: {
   name: string;
   instagramHandle: string;
