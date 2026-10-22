@@ -10,6 +10,7 @@
     "OPENAI_API_KEY": "",
     "CANVA_CLIENT_ID": "",
     "CANVA_CLIENT_SECRET": "",
+    "CANVA_REFRESH_TOKEN": "",
     "INSTAGRAM_ACCESS_TOKEN": "",
     "ALLOWED_ORIGIN": "*"
   }

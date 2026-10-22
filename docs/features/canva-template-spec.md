@@ -16,16 +16,18 @@ Docs: [Autofill guide](https://www.canva.dev/docs/connect/autofill-guide/), [Cre
 
 All fields are Canva **text** data fields.
 
-| Page | Fields | Suggested max chars |
+| Page | Fields | Max chars (fits the box) |
 |---|---|---|
-| 1 Cover | `s1_title`, `s1_sub` | 22 / 24 |
-| 2 Empathy | `s2_head`, `s2_body` | 18 / 60 |
-| 3 Point | `s3_num`, `s3_head`, `s3_body` | 2 / 16 / 80 |
-| 4 Point | `s4_num`, `s4_head`, `s4_body` | 2 / 16 / 80 |
-| 5 Point | `s5_num`, `s5_head`, `s5_body` | 2 / 16 / 80 |
-| 6 Point | `s6_num`, `s6_head`, `s6_body` | 2 / 16 / 80 |
-| 7 Hybrid | `s7_label`, `s7_head`, `s7_body` | 12 / 20 / 80 |
-| 8 CTA | `s8_head`, `s8_cta` | 40 / 24 |
+| 1 Cover | `s1_title`, `s1_sub` | 20 / 11 |
+| 2 Empathy | `s2_head`, `s2_body` | 6 / 33 |
+| 3 Point | `s3_num`, `s3_head`, `s3_body` | 1 / 4 / 42 |
+| 4 Point | `s4_num`, `s4_head`, `s4_body` | 1 / 5 / 40 |
+| 5 Point | `s5_num`, `s5_head`, `s5_body` | 1 / 6 / 45 |
+| 6 Point | `s6_num`, `s6_head`, `s6_body` | 1 / 5 / 40 |
+| 7 Hybrid | `s7_label`, `s7_head`, `s7_body` | 4 / 5 / 36 |
+| 8 CTA | `s8_head`, `s8_cta` | 8 / 7 |
+
+The limits live in `SLIDE_FIELD_LIMITS` (`@ama/shared`); the zod schema, the creation agent's instructions and the mock agent all read them, and `slide-limits.test.ts` pins them to the capacities above. They match the **wakaru carousel template** (Canva brand template `EAHYv4kVYQw`): Canva autofill does not shrink text, so copy longer than a box overflows. Re-measure and update the test if you widen or restyle a box.
 
 `s7_*` uses the same layout for **job_pick** and **summary fallback** so one brand template covers the hybrid type.
 
@@ -42,6 +44,18 @@ Optional footer text (handle, page numbers) can be static in the Canva design ra
   }
 }
 ```
+
+## Draft generation (new accounts)
+
+`POST /canva/template-drafts` body: `referenceUrl`, `screenshots[]` (image data URLs / https), `assetUrls[]`, `styleNotes`.
+
+- `referenceUrl` must be an Instagram profile link or `@handle` (post, reel and story links are rejected).
+- Structure: `inferTemplateStructure` reads the screenshots with a vision model and returns pages of `{ title, purpose, fields[{ name, maxChars }] }`. Field names are `s{page}_{kind}` with kind one of `title | sub | head | body | num | label | cta`. Max 10 pages; names must be unique. No key or no screenshots → `DEFAULT_TEMPLATE_STRUCTURE` (the 8 pages / 21 fields above).
+- Draft: `buildDraftPdf` makes one 1080×1350 page per structure page; `POST /v1/imports` creates the Canva design (scope `design:content:write`). With no structure a blank custom-size design is created instead.
+- Response: `{ draft: { designId, editUrl }, brief, structure, mode }`.
+- Needs a human afterwards: layout, field tagging, publishing as a brand template.
+
+Not verified against live Canva yet: the PDF import path is covered by unit tests with a faked `fetch`, so run one real draft before relying on it.
 
 ## Export
 

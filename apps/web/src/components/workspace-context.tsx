@@ -9,19 +9,27 @@ import {
   useState,
   type ReactNode
 } from "react";
-import type { Guideline, Idea, MemoryItem, Post, Reference } from "@ama/shared";
+import type { Guideline, Idea, MemoryItem, Post, PostAsset, Reference } from "@ama/shared";
 import {
+  approvePost as approvePostApi,
+  createAccountApi,
+  createContent,
   createReference,
   deleteMemory,
   deleteReference,
   fetchWorkspaceBundle,
   getGuideline,
+  getPostDetail,
   listIdeas,
   listMemory,
   listReferences,
   patchIdea,
+  putCanvaTemplate,
   putGuideline,
-  runIdeation
+  regeneratePost,
+  renderPost,
+  runIdeation,
+  schedulePost
 } from "../lib/api";
 import {
   DEFAULT_PROMPT,
@@ -63,12 +71,18 @@ interface WorkspaceValue {
     schedule: string,
     target: string,
     concept: string,
-    title?: string
-  ) => void;
+    title?: string,
+    canvaTemplateId?: string
+  ) => Promise<void>;
+  saveCanvaTemplate: (accountId: string, templateId: string) => Promise<void>;
   updateAccount: (id: string, patch: Partial<MockAccount>) => void;
   updatePost: (id: string, patch: Partial<MockPost>) => void;
   deletePost: (id: string) => void;
   approvePost: (id: string) => void;
+  /** Re-export the stored Canva design (preview URLs expire). */
+  reloadPostAssets: (id: string) => Promise<void>;
+  /** Re-run the creation agent for a draft. */
+  retryGeneration: (id: string) => Promise<void>;
   addDraftFromIdea: (idea: IdeaCandidate) => void;
   generateIdeasFromApi: (input: {
     seedText: string;
@@ -113,7 +127,43 @@ function dayFromIso(iso: string | null | undefined): number {
   return Number.isNaN(d.getDate()) ? 1 : d.getDate();
 }
 
-function mapApiPost(post: Post, ideaTarget: string): MockPost {
+const GENERATING: readonly string[] = ["pending", "generating_copy", "rendering"];
+
+function formatScheduled(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Tomorrow 18:00 in the browser's zone, as an ISO string with offset (what the API requires). */
+function defaultScheduleIso(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(18, 0, 0, 0);
+  const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
+  const offsetMin = -d.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T18:00:00` +
+    `${sign}${pad(Math.floor(Math.abs(offsetMin) / 60))}:${pad(Math.abs(offsetMin) % 60)}`
+  );
+}
+
+function assetUrlsOf(assets: readonly PostAsset[]): readonly string[] {
+  return [...assets].sort((a, b) => (a.slideIndex ?? 0) - (b.slideIndex ?? 0)).map((a) => a.imageUrl);
+}
+
+function canvaDesignIdOf(assets: readonly PostAsset[]): string | undefined {
+  return assets.find((a) => a.canvaDesignId)?.canvaDesignId;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : "不明なエラー";
+}
+
+function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[]): MockPost {
   return {
     id: post.id,
     accountId: post.accountId,
@@ -126,9 +176,13 @@ function mapApiPost(post: Post, ideaTarget: string): MockPost {
           ? "draft"
           : (post.status as MockPost["status"]),
     day: dayFromIso(post.scheduledAt ?? post.createdAt),
-    scheduledAt: post.scheduledAt ?? null,
+    scheduledAt: formatScheduled(post.scheduledAt),
     ideaTarget,
-    ideaId: post.ideaId
+    ideaId: post.ideaId,
+    generationStatus: post.generationStatus,
+    generationError: post.generationError ?? null,
+    assetUrls: assets ? assetUrlsOf(assets) : undefined,
+    canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined
   };
 }
 
@@ -168,7 +222,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setAccounts((prev) =>
       prev.map((a) =>
         a.id === accountId
-          ? mapAccount(accountId, a.handle, guideItem, mem.items, ideaList.items, a)
+          ? {
+              ...mapAccount(accountId, a.handle, guideItem, mem.items, ideaList.items, a),
+              canvaTemplateId: a.canvaTemplateId
+            }
           : a
       )
     );
@@ -190,8 +247,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
         const mappedAccounts =
           bundle.accounts.length > 0
-            ? bundle.accounts.map((acc) =>
-                mapAccount(
+            ? bundle.accounts.map((acc) => ({
+                ...mapAccount(
                   acc.id,
                   acc.instagramHandle.startsWith("@")
                     ? acc.instagramHandle
@@ -200,8 +257,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                   acc.id === (bundle.accounts[0]?.id ?? "") ? bundle.memory : [],
                   acc.id === (bundle.accounts[0]?.id ?? "") ? bundle.ideas : [],
                   INITIAL_ACCOUNTS.find((a) => a.id === acc.id)
-                )
-              )
+                ),
+                canvaTemplateId: acc.canvaTemplateId
+              }))
             : INITIAL_ACCOUNTS;
 
         setAccounts(mappedAccounts);
@@ -230,6 +288,47 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (!apiReady || !activeAccountId) return;
     void refreshAccountSideData(activeAccountId).catch(() => null);
   }, [activeAccountId, apiReady, refreshAccountSideData]);
+
+  // Poll posts whose Canva/agent generation is still running until they are ready or failed.
+  const generatingIds = posts
+    .filter((p) => p.generationStatus && GENERATING.includes(p.generationStatus))
+    .map((p) => p.id)
+    .join(",");
+  useEffect(() => {
+    if (!apiReady || !generatingIds) return;
+    const timer = window.setInterval(() => {
+      for (const id of generatingIds.split(",")) {
+        getPostDetail(id)
+          .then((detail) => {
+            setPosts((prev) =>
+              prev.map((p) => (p.id === id ? mapApiPost(detail.post, p.ideaTarget, detail.assets) : p))
+            );
+            if (detail.post.generationStatus === "ready") notify("コンテンツが完成しました");
+            if (detail.post.generationStatus === "failed") {
+              notify(`生成に失敗しました: ${detail.post.generationError ?? ""}`);
+            }
+          })
+          .catch(() => {
+            // Transient network error: the next tick retries.
+          });
+      }
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [apiReady, generatingIds, notify]);
+
+  // Load slide images lazily when a finished post is opened.
+  useEffect(() => {
+    if (!apiReady || !selectedPostId) return;
+    const post = posts.find((p) => p.id === selectedPostId);
+    if (!post || post.generationStatus !== "ready" || post.assetUrls) return;
+    getPostDetail(post.id)
+      .then((detail) =>
+        setPosts((prev) =>
+          prev.map((p) => (p.id === post.id ? mapApiPost(detail.post, p.ideaTarget, detail.assets) : p))
+        )
+      )
+      .catch((error: unknown) => notify(`プレビューの読み込みに失敗しました: ${errorText(error)}`));
+  }, [apiReady, selectedPostId, posts, notify]);
 
   const value = useMemo<WorkspaceValue>(
     () => ({
@@ -266,24 +365,54 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       closeModal: () => setModal({ kind: "none" }),
       notify,
       refreshAccountSideData,
-      addAccount: (handle, schedule, target, concept, title) => {
-        const id = `acc_${Date.now()}`;
+      addAccount: async (handle, schedule, target, concept, title, canvaTemplateId) => {
         const clean = handle.trim().replace(/^@?/, "@");
+        const label = title?.trim() || concept.trim() || target.trim() || "新規アカウント";
+        let id = `acc_${Date.now()}`;
+        if (apiReady) {
+          if (!canvaTemplateId) throw new Error("Canvaテンプレートを選択してください");
+          const created = await createAccountApi({
+            name: label,
+            instagramHandle: clean,
+            tone: "やさしく実践的",
+            canvaTemplateId
+          });
+          id = created.item.id;
+          // Ideation needs a guideline; empty fields fall back so the account is usable right away.
+          await putGuideline(id, {
+            target: target.trim() || "未設定",
+            concept: concept.trim() || "未設定",
+            tone: "やさしく実践的",
+            contentPillars: [],
+            ngRules: [],
+            ctaPolicy: "",
+            hashtagPolicy: "",
+            jobPickEnabled: false,
+            systemPrompt: DEFAULT_PROMPT
+          });
+        }
         const account: MockAccount = {
           id,
           handle: clean,
-          title: title?.trim() || concept.trim() || target.trim() || "新規アカウント",
+          title: label,
           target: target.trim(),
           concept: concept.trim(),
           schedule,
           systemPrompt: DEFAULT_PROMPT,
           memory: [],
-          ideaQueue: []
+          ideaQueue: [],
+          canvaTemplateId
         };
         setAccounts((prev) => [...prev, account]);
         setActiveAccountId(id);
         setSelectedPostId(null);
         setSelectedIdeaId(null);
+      },
+      saveCanvaTemplate: async (accountId, templateId) => {
+        await putCanvaTemplate(accountId, templateId);
+        setAccounts((prev) =>
+          prev.map((a) => (a.id === accountId ? { ...a, canvaTemplateId: templateId } : a))
+        );
       },
       updateAccount: (id, patch) =>
         setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a))),
@@ -293,15 +422,69 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setPosts((prev) => prev.filter((p) => p.id !== id));
         setSelectedPostId((current) => (current === id ? null : current));
       },
-      approvePost: (id) =>
-        setPosts((prev) =>
-          prev.map((p) =>
-            p.id === id
-              ? { ...p, status: "scheduled", scheduledAt: p.scheduledAt ?? "2026/02/21 18:00" }
-              : p
-          )
-        ),
+      approvePost: (id) => {
+        if (!apiReady) {
+          setPosts((prev) =>
+            prev.map((p) =>
+              p.id === id
+                ? { ...p, status: "scheduled", scheduledAt: p.scheduledAt ?? "2026/02/21 18:00" }
+                : p
+            )
+          );
+          notify("承認して予約しました");
+          return;
+        }
+        void approvePostApi(id)
+          .then(() => schedulePost(id, defaultScheduleIso()))
+          .then((res) => {
+            setPosts((prev) =>
+              prev.map((p) =>
+                p.id === id
+                  ? { ...p, status: "scheduled", scheduledAt: formatScheduled(res.item.scheduledAt) }
+                  : p
+              )
+            );
+            notify("承認して予約しました");
+          })
+          .catch((error: unknown) => notify(`承認に失敗しました: ${errorText(error)}`));
+      },
+      reloadPostAssets: async (id) => {
+        try {
+          const detail = await renderPost(id, true);
+          setPosts((prev) =>
+            prev.map((p) => (p.id === id ? mapApiPost(detail.post, p.ideaTarget, detail.assets) : p))
+          );
+        } catch (error) {
+          notify(`プレビューの更新に失敗しました: ${errorText(error)}`);
+        }
+      },
+      retryGeneration: async (id) => {
+        try {
+          const { item } = await regeneratePost(id);
+          setPosts((prev) =>
+            prev.map((p) =>
+              p.id === id ? { ...mapApiPost(item, p.ideaTarget), assetUrls: undefined } : p
+            )
+          );
+        } catch (error) {
+          notify(`再生成に失敗しました: ${errorText(error)}`);
+        }
+      },
       addDraftFromIdea: (idea) => {
+        const target = accounts.find((a) => a.id === activeAccountId)?.target ?? "";
+        if (apiReady) {
+          void createContent(idea.id)
+            .then(({ item }) => {
+              setPosts((prev) => [...prev, mapApiPost(item, target)]);
+              setSelectedIdeaId(null);
+              setSelectedPostId(item.id);
+              setIdeas((prev) =>
+                prev.map((i) => (i.id === idea.id ? { ...i, status: "selected" } : i))
+              );
+            })
+            .catch((error: unknown) => notify(`コンテンツの作成に失敗しました: ${errorText(error)}`));
+          return;
+        }
         const id = `post_${Date.now()}`;
         const draft: MockPost = {
           id,

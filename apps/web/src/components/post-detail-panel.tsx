@@ -5,6 +5,7 @@ import type { Idea } from "@ama/shared";
 import { Icon } from "./icon";
 import { WorkflowSteps, type WorkflowStep } from "./workflow-steps";
 import { useWorkspace } from "./workspace-context";
+import { canvaDesignUrl } from "../lib/canva";
 import { STATUS_LABEL, type MockPost } from "../lib/mock-data";
 
 const IDEA_STATUS_LABEL: Record<Idea["status"], string> = {
@@ -13,6 +14,85 @@ const IDEA_STATUS_LABEL: Record<Idea["status"], string> = {
   rejected: "却下",
   used: "使用済み"
 };
+
+const GENERATION_LABEL: Record<string, string> = {
+  pending: "生成を待機中…",
+  generating_copy: "スライドの文章を作成中…",
+  rendering: "Canvaで画像を生成中…"
+};
+
+interface SlidePreviewProps {
+  readonly post: MockPost;
+  readonly onReload: () => void;
+  readonly onRetry: () => void;
+}
+
+function SlidePreview({ post, onReload, onRetry }: SlidePreviewProps) {
+  const [index, setIndex] = useState(0);
+  const status = post.generationStatus;
+
+  if (status && status in GENERATION_LABEL) {
+    return (
+      <div className="image-box">
+        <span className="small muted">{GENERATION_LABEL[status]}</span>
+      </div>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <div className="stack gap-8">
+        <div className="image-box">
+          <span className="small muted" style={{ padding: 12 }}>
+            生成に失敗しました{post.generationError ? `: ${post.generationError}` : ""}
+          </span>
+        </div>
+        <button className="btn outline block" onClick={onRetry}>
+          再生成する
+        </button>
+      </div>
+    );
+  }
+  const urls = post.assetUrls ?? [];
+  if (urls.length === 0) {
+    return (
+      <div className="image-box">
+        <Icon name="image" size={32} />
+      </div>
+    );
+  }
+  const current = Math.min(index, urls.length - 1);
+  const designUrl = canvaDesignUrl(post.canvaDesignId);
+  return (
+    <div className="stack gap-8">
+      {/* eslint-disable-next-line @next/next/no-img-element -- signed Canva CDN URLs, not optimizable */}
+      <img className="slide-preview" src={urls[current]} alt={`スライド ${current + 1}`} />
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <button className="btn ghost" disabled={current === 0} onClick={() => setIndex(current - 1)}>
+          前へ
+        </button>
+        <span className="small muted">
+          {current + 1} / {urls.length}
+        </span>
+        <button
+          className="btn ghost"
+          disabled={current === urls.length - 1}
+          onClick={() => setIndex(current + 1)}
+        >
+          次へ
+        </button>
+      </div>
+      <button className="btn outline block" onClick={onReload}>
+        プレビューを更新（URL期限切れ時）
+      </button>
+      {designUrl ? (
+        <a className="btn outline block" href={designUrl} target="_blank" rel="noreferrer">
+          Canvaで開く
+          <Icon name="external-link" size={14} />
+        </a>
+      ) : null}
+    </div>
+  );
+}
 
 export function PostDetailPanel() {
   const {
@@ -26,6 +106,8 @@ export function PostDetailPanel() {
     deletePost,
     approvePost,
     addDraftFromIdea,
+    reloadPostAssets,
+    retryGeneration,
     notify
   } = useWorkspace();
   const idea = ideas.find((item) => item.id === selectedIdeaId) ?? null;
@@ -106,7 +188,6 @@ export function PostDetailPanel() {
                 className="btn primary block"
                 onClick={() => {
                   addDraftFromIdea({ id: idea.id, title: idea.title, summary: idea.summary });
-                  notify("コンテンツの下書きを作成しました（画像生成は Phase 3）");
                 }}
               >
                 <Icon name="sparkles" size={14} />
@@ -143,9 +224,11 @@ export function PostDetailPanel() {
             </div>
             <div className="stack gap-8">
               <span className="label">生成画像プレビュー</span>
-              <div className="image-box">
-                <Icon name="image" size={32} />
-              </div>
+              <SlidePreview
+                post={display}
+                onReload={() => void reloadPostAssets(display.id)}
+                onRetry={() => void retryGeneration(display.id)}
+              />
             </div>
             <button
               className="field-box stack gap-6 link-card"
@@ -180,11 +263,11 @@ export function PostDetailPanel() {
               </button>
               <button
                 className="btn success block"
-                disabled={display.status === "published"}
-                onClick={() => {
-                  approvePost(display.id);
-                  notify("承認して予約しました");
-                }}
+                disabled={
+                  display.status === "published" ||
+                  (display.generationStatus !== undefined && display.generationStatus !== "ready")
+                }
+                onClick={() => approvePost(display.id)}
               >
                 承認して予約
               </button>

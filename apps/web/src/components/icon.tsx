@@ -7,6 +7,7 @@ export type IconName =
   | "settings-2"
   | "plus"
   | "link"
+  | "external-link"
   | "instagram"
   | "bot"
   | "list"
@@ -46,6 +47,12 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  "external-link": (
+    <>
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      <path d="M15 3h6v6M10 14L21 3" />
+    </>
+  ),
   link: (
     <>
       <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" />

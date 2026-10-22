@@ -1,25 +1,15 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { createRepository } from "@ama/db";
 import type { AgentRun, Post } from "@ama/shared";
+import type { Repository } from "@ama/db";
 import { agentRunRequestSchema } from "@ama/shared";
-import {
-  createAgentRunner,
-  createCanvaClient,
-  createInstagramClient
-} from "@ama/integrations";
+import { createAgentRunner, createInstagramClient } from "@ama/integrations";
 import { z } from "zod";
+import { createCanva, createRepo, type Bindings } from "./lib/env";
+import { accountRoutes } from "./routes/accounts";
+import { canvaRoutes } from "./routes/canva";
+import { creationRoutes } from "./routes/creation";
 import { ideationRoutes } from "./routes/ideation";
-
-type Bindings = {
-  TURSO_DATABASE_URL?: string;
-  TURSO_AUTH_TOKEN?: string;
-  OPENAI_API_KEY?: string;
-  CANVA_CLIENT_ID?: string;
-  CANVA_CLIENT_SECRET?: string;
-  INSTAGRAM_ACCESS_TOKEN?: string;
-  ALLOWED_ORIGIN?: string;
-};
 
 const app = new Hono<{ Bindings: Bindings }>();
 app.use("*", async (c, next) => {
@@ -28,6 +18,9 @@ app.use("*", async (c, next) => {
 });
 
 app.route("/", ideationRoutes);
+app.route("/", creationRoutes);
+app.route("/", canvaRoutes);
+app.route("/", accountRoutes);
 
 app.get("/health", (c) => {
   return c.json({
@@ -63,15 +56,6 @@ app.get("/posts/:id", async (c) => {
   return c.json(post);
 });
 
-app.post("/posts/:id/approve", async (c) => {
-  const repo = createRepo(c.env);
-  const post = await repo.setPostStatus(c.req.param("id"), "approved");
-  if (!post) {
-    return c.json({ error: "Post not found" }, 404);
-  }
-  return c.json({ item: post });
-});
-
 app.get("/accounts/:id/config", async (c) => {
   const repo = createRepo(c.env);
   const account = await repo.getAccount(c.req.param("id"));
@@ -91,10 +75,7 @@ app.post("/agent/run", async (c) => {
   const runner = createAgentRunner({
     openAiApiKey: c.env.OPENAI_API_KEY
   });
-  const canva = createCanvaClient({
-    canvaClientId: c.env.CANVA_CLIENT_ID,
-    canvaClientSecret: c.env.CANVA_CLIENT_SECRET
-  });
+  const canva = createCanva(c.env, repo);
 
   const output = await runner.run(parsed.data, {
     getCandidateJobs: async () => get_candidate_jobs(repo),
@@ -103,13 +84,13 @@ app.post("/agent/run", async (c) => {
     createPostDraft: async (input) => {
       const design = await canva.autofill({
         templateId: (await repo.getAccount(input.accountId))?.canvaTemplateId ?? "default_template",
-        title: input.title,
-        subtitle: input.caption
+        fields: { s1_title: input.title, s1_sub: input.caption },
+        title: input.title
       });
-      const exportUrl = await canva.getExportUrl(design.designId);
+      const [exportUrl] = await canva.exportPages(design.designId);
       const preview = create_post_draft_preview({
         ...input,
-        assets: [{ imageUrl: exportUrl, canvaDesignId: design.designId }]
+        assets: [{ imageUrl: exportUrl ?? "", canvaDesignId: design.designId }]
       });
       return { post: preview };
     },
@@ -181,27 +162,20 @@ app.post("/instagram/publish/:id", async (c) => {
   return c.json({ item: published, mode: instagram.mode });
 });
 
-function createRepo(env: Bindings) {
-  return createRepository({
-    tursoUrl: env.TURSO_DATABASE_URL,
-    tursoAuthToken: env.TURSO_AUTH_TOKEN
-  });
-}
-
-async function get_candidate_jobs(repo: ReturnType<typeof createRepo>) {
+async function get_candidate_jobs(repo: Repository) {
   return repo.listJobs();
 }
 
-async function get_previous_posts(repo: ReturnType<typeof createRepo>, accountId: string, limit: number) {
+async function get_previous_posts(repo: Repository, accountId: string, limit: number) {
   return repo.listPostsByAccount(accountId, limit);
 }
 
-async function get_account_config(repo: ReturnType<typeof createRepo>, accountId: string) {
+async function get_account_config(repo: Repository, accountId: string) {
   return repo.getAccount(accountId);
 }
 
 async function create_post_draft(
-  repo: ReturnType<typeof createRepo>,
+  repo: Repository,
   input: {
     accountId: string;
     title: string;

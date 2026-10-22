@@ -2,6 +2,7 @@ import { Agent, run, setDefaultOpenAIKey, tool } from "@openai/agents";
 import { z } from "zod";
 import type { Guideline, Idea, Job, MemoryItem, Post, Reference } from "@ama/shared";
 import { NotConfiguredError } from "./errors";
+import { logOpenAiRunCost } from "./openai-cost";
 
 export type IdeationToolContext = {
   getGuideline: (accountId: string) => Promise<Guideline | null>;
@@ -384,7 +385,8 @@ export class OpenAIIdeationAgent implements IdeationAgent {
 
     const agent = new Agent({
       name: "Instagram Ideation Agent",
-      model: "gpt-4.1",
+      // Idea drafts are high-volume. Final slide copy stays on gpt-4.1 in the creation agent.
+      model: "gpt-4.1-mini",
       instructions: `You are the ideation agent for a Japanese Instagram career/job-change media account.
 
 Architecture rules:
@@ -434,8 +436,10 @@ Required workflow:
     ].join("\n\n");
 
     try {
-      await run(agent, userMessage, { maxTurns: 20 });
+      const result = await run(agent, userMessage, { maxTurns: 20 });
+      logOpenAiRunCost("ideation", agent.model, result);
     } catch (error) {
+      logOpenAiRunCost("ideation", agent.model, error);
       // If the model still produced a tool payload we captured, prefer that over a hard fail.
       if (!submission.value) {
         throw new Error(rejection ?? (error instanceof Error ? error.message : "Ideation agent failed"));

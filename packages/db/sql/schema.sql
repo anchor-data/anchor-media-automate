@@ -142,3 +142,17 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   output_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
+
+-- Canva rotates the refresh_token on every exchange, so the latest one lives here (single row).
+CREATE TABLE IF NOT EXISTS canva_tokens (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  refresh_token TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+
+-- Exported page URLs per Canva design (short-lived signed URLs; design id stays the source of truth).
+CREATE TABLE IF NOT EXISTS canva_design_cache (
+  design_id TEXT PRIMARY KEY,
+  page_urls_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);

@@ -6,6 +6,7 @@ import type {
   Job,
   MemoryItem,
   Post,
+  PostAsset,
   Reference,
   ReferenceCreate
 } from "@ama/shared";
@@ -128,6 +129,80 @@ export async function patchIdea(
 
 export async function approvePost(postId: string) {
   return request<{ item: Post }>(`/posts/${postId}/approve`, { method: "POST" });
+}
+
+export type BrandTemplate = { id: string; title: string; thumbnailUrl: string | null };
+
+export async function listBrandTemplates() {
+  return request<{ items: BrandTemplate[]; mode: string }>("/canva/brand-templates");
+}
+
+export type TemplateDraftInput = {
+  referenceUrl: string;
+  assetUrls: string[];
+  styleNotes: string;
+  /** Slides of one reference carousel, in order (image data URLs). */
+  screenshots: string[];
+};
+
+export type TemplateDraft = {
+  draft: { designId: string; editUrl: string };
+  brief: { referenceHandle: string | null; markdown: string; pages: Array<{ page: number; title: string }> };
+  mode: string;
+};
+
+/** Creates the multi-page Canva draft; the user tags and publishes it in Canva afterwards. */
+export async function createTemplateDraft(body: TemplateDraftInput) {
+  return request<TemplateDraft>("/canva/template-drafts", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function createAccountApi(body: {
+  name: string;
+  instagramHandle: string;
+  tone: string;
+  canvaTemplateId: string;
+}) {
+  return request<{ item: Account }>("/accounts", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function putCanvaTemplate(accountId: string, templateId: string) {
+  return request<{ item: Account }>(`/accounts/${accountId}/canva-template`, {
+    method: "PUT",
+    body: JSON.stringify({ templateId })
+  });
+}
+
+export type PostDetail = { post: Post; assets: PostAsset[] };
+
+export async function getPostDetail(postId: string) {
+  return request<PostDetail>(`/posts/${postId}`);
+}
+
+/** Starts agent + Canva render in the background; poll getPostDetail until generationStatus is ready/failed. */
+export async function createContent(ideaId: string) {
+  return request<{ item: Post }>(`/ideas/${ideaId}/create`, { method: "POST" });
+}
+
+export async function regeneratePost(postId: string, feedback?: string) {
+  return request<{ item: Post }>(`/posts/${postId}/regenerate`, {
+    method: "POST",
+    body: JSON.stringify({ feedback })
+  });
+}
+
+/** `reexport` refreshes expired preview URLs without re-running Canva autofill. */
+export async function renderPost(postId: string, reexport: boolean) {
+  return request<PostDetail>(`/posts/${postId}/render`, {
+    method: "POST",
+    body: JSON.stringify({ reexport })
+  });
+}
+
+export async function schedulePost(postId: string, scheduledAt: string) {
+  return request<{ item: Post }>(`/posts/${postId}/schedule`, {
+    method: "POST",
+    body: JSON.stringify({ scheduledAt })
+  });
 }
 
 export type DashboardBundle = {

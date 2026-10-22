@@ -1144,3 +1144,12 @@ button.trow:hover,
     transition: none;
   }
 }
+
+.slide-preview {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  object-fit: contain;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
