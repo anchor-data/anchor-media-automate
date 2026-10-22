@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import type { Guideline, Idea, MemoryItem, Reference } from "@ama/shared";
+import type { Guideline, Idea, MemoryItem, Post, Reference } from "@ama/shared";
 import {
   createReference,
   deleteMemory,
@@ -26,7 +26,6 @@ import {
 import {
   DEFAULT_PROMPT,
   INITIAL_ACCOUNTS,
-  INITIAL_POSTS,
   type IdeaCandidate,
   type MockAccount,
   type MockPost
@@ -44,6 +43,7 @@ interface WorkspaceValue {
   posts: readonly MockPost[];
   activeAccountId: string;
   selectedPostId: string | null;
+  selectedIdeaId: string | null;
   modal: ModalState;
   toast: string | null;
   loading: boolean;
@@ -55,6 +55,7 @@ interface WorkspaceValue {
   ideas: readonly Idea[];
   setActiveAccountId: (id: string) => void;
   selectPost: (id: string | null) => void;
+  selectIdea: (id: string | null) => void;
   openModal: (modal: ModalState) => void;
   closeModal: () => void;
   addAccount: (
@@ -112,11 +113,30 @@ function dayFromIso(iso: string | null | undefined): number {
   return Number.isNaN(d.getDate()) ? 1 : d.getDate();
 }
 
+function mapApiPost(post: Post, ideaTarget: string): MockPost {
+  return {
+    id: post.id,
+    accountId: post.accountId,
+    title: post.title,
+    caption: post.caption,
+    status:
+      post.status === "approved"
+        ? "scheduled"
+        : post.status === "rejected" || post.status === "failed"
+          ? "draft"
+          : (post.status as MockPost["status"]),
+    day: dayFromIso(post.scheduledAt ?? post.createdAt),
+    scheduledAt: post.scheduledAt ?? null,
+    ideaTarget
+  };
+}
+
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [accounts, setAccounts] = useState<readonly MockAccount[]>(INITIAL_ACCOUNTS);
-  const [posts, setPosts] = useState<readonly MockPost[]>(INITIAL_POSTS);
+  const [posts, setPosts] = useState<readonly MockPost[]>([]);
   const [activeAccountId, setActiveAccountId] = useState(INITIAL_ACCOUNTS[0]?.id ?? "");
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const [selectedIdeaId, setSelectedIdeaId] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -187,25 +207,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const firstId = mappedAccounts[0]?.id ?? "";
         setActiveAccountId(firstId);
 
-        if (bundle.posts.length > 0) {
-          setPosts(
-            bundle.posts.map((p) => ({
-              id: p.id,
-              accountId: p.accountId,
-              title: p.title,
-              caption: p.caption,
-              status:
-                p.status === "approved"
-                  ? "scheduled"
-                  : p.status === "rejected" || p.status === "failed"
-                    ? "draft"
-                    : (p.status as MockPost["status"]),
-              day: dayFromIso(p.scheduledAt ?? p.createdAt),
-              scheduledAt: p.scheduledAt ?? null,
-              ideaTarget: bundle.guideline?.target ?? ""
-            }))
-          );
-        }
+        if (cancelled) return;
+        setPosts(
+          bundle.posts.map((post) => mapApiPost(post, bundle.guideline?.target ?? ""))
+        );
       } catch {
         if (!cancelled) {
           setApiReady(false);
@@ -231,6 +236,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       posts,
       activeAccountId,
       selectedPostId,
+      selectedIdeaId,
       modal,
       toast,
       loading,
@@ -241,10 +247,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       memoryItems,
       ideas,
       setActiveAccountId: (id: string) => {
-        if (id !== activeAccountId) setSelectedPostId(null);
+        if (id !== activeAccountId) {
+          setSelectedPostId(null);
+          setSelectedIdeaId(null);
+        }
         setActiveAccountId(id);
       },
-      selectPost: setSelectedPostId,
+      selectPost: (id: string | null) => {
+        setSelectedPostId(id);
+        if (id) setSelectedIdeaId(null);
+      },
+      selectIdea: (id: string | null) => {
+        setSelectedIdeaId(id);
+        if (id) setSelectedPostId(null);
+      },
       openModal: setModal,
       closeModal: () => setModal({ kind: "none" }),
       notify,
@@ -266,6 +282,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setAccounts((prev) => [...prev, account]);
         setActiveAccountId(id);
         setSelectedPostId(null);
+        setSelectedIdeaId(null);
       },
       updateAccount: (id, patch) =>
         setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a))),
@@ -289,39 +306,46 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           id,
           accountId: activeAccountId,
           title: idea.title,
-          caption: `${idea.summary}\n\n#キャリア #転職`,
+          caption: idea.summary,
           status: "draft",
-          day: 24,
+          day: new Date().getDate(),
           scheduledAt: null,
           ideaTarget: accounts.find((a) => a.id === activeAccountId)?.target ?? ""
         };
         setPosts((prev) => [...prev, draft]);
         setSelectedPostId(id);
         if (apiReady) {
-          void patchIdea(idea.id, { status: "selected" }).catch(() => null);
+          void patchIdea(idea.id, { status: "selected" })
+            .then((updated) => {
+              setIdeas((prev) =>
+                prev.map((item) => (item.id === idea.id ? updated.item : item))
+              );
+            })
+            .catch(() => null);
         }
       },
       generateIdeasFromApi: async ({ seedText, seedUrl }) => {
-        if (!apiReady) {
-          const { generateIdeas } = await import("../lib/mock-data");
-          return [...generateIdeas(seedText)];
-        }
         const result = await runIdeation({
           accountId: activeAccountId,
           count: 3,
           seedText,
           seedUrl: seedUrl || undefined
         });
-        setIdeas((prev) => [...result.items, ...prev]);
+        const stored = await listIdeas(activeAccountId);
+        const savedIds = new Set(result.items.map((idea) => idea.id));
+        const confirmed = stored.items.filter((idea) => savedIds.has(idea.id));
+        if (confirmed.length !== result.items.length) {
+          throw new Error("生成した企画をデータベースに保存できませんでした");
+        }
+        setIdeas(stored.items);
         setAccounts((prev) =>
           prev.map((a) =>
             a.id === activeAccountId
               ? {
                   ...a,
-                  ideaQueue: [
-                    ...result.items.map((i) => i.title),
-                    ...a.ideaQueue.filter((t) => !result.items.some((i) => i.title === t))
-                  ]
+                  ideaQueue: stored.items
+                    .filter((idea) => idea.status === "queued")
+                    .map((idea) => idea.title)
                 }
               : a
           )
@@ -390,6 +414,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       posts,
       activeAccountId,
       selectedPostId,
+      selectedIdeaId,
       modal,
       toast,
       loading,

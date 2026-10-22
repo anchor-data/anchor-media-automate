@@ -40,14 +40,6 @@ export const SCHEDULE_OPTIONS = ["毎日 18:00", "毎日 12:00", "平日 9:00", 
 export const DEFAULT_PROMPT =
   "あなたはプロのSNSマーケターです。提供される自社データやテーマに基づき、Demindのテンプレートに従って魅力的なInstagramのカルーセル投稿を企画してください。";
 
-const REMOTE_CAPTION = `リモート面接を成功させたいですか？
-
-1. バーチャルホワイトボードを使いこなす
-2. 思考プロセスを言語化する
-3. 個人プロジェクトをアピールする
-
-#RemoteWork #FrontendDev`;
-
 export const INITIAL_ACCOUNTS: readonly MockAccount[] = [
   {
     id: "acc_001",
@@ -81,69 +73,6 @@ export const INITIAL_ACCOUNTS: readonly MockAccount[] = [
     systemPrompt: DEFAULT_PROMPT,
     memory: ["ポートフォリオ構成"],
     ideaQueue: ["作品集の構成テンプレート"]
-  }
-];
-
-export const INITIAL_POSTS: readonly MockPost[] = [
-  {
-    id: "post_001",
-    accountId: "acc_001",
-    title: "リモート面接を成功させる5つのコツ",
-    caption: REMOTE_CAPTION,
-    status: "scheduled",
-    day: 14,
-    scheduledAt: "2026/02/14 18:00",
-    ideaTarget: "20-30代リモート希望エンジニア"
-  },
-  {
-    id: "post_002",
-    accountId: "acc_001",
-    title: "React tips: useStateの落とし穴",
-    caption: "useStateでハマりがちな3つの落とし穴を解説します。\n\n#React #Frontend",
-    status: "scheduled",
-    day: 16,
-    scheduledAt: "2026/02/16 19:00",
-    ideaTarget: "駆け出しフロントエンドエンジニア"
-  },
-  {
-    id: "post_003",
-    accountId: "acc_001",
-    title: "2024年必須のReactスキル トップ3",
-    caption: "2024年に身につけたいReactスキルを3つ厳選しました。\n\n#React #Career",
-    status: "draft",
-    day: 20,
-    scheduledAt: null,
-    ideaTarget: "転職を考えるフロントエンドエンジニア"
-  },
-  {
-    id: "post_004",
-    accountId: "acc_001",
-    title: "エンジニアの給与交渉術",
-    caption: "年収アップのための交渉ステップをまとめました。\n\n#給与交渉 #転職",
-    status: "published",
-    day: 10,
-    scheduledAt: "2026/02/10 18:00",
-    ideaTarget: "20-30代エンジニア"
-  },
-  {
-    id: "post_005",
-    accountId: "acc_002",
-    title: "未経験から営業マネージャーへ",
-    caption: "営業職からマネージャーに進むための3ステップ。\n\n#営業 #キャリア",
-    status: "scheduled",
-    day: 12,
-    scheduledAt: "2026/02/12 9:00",
-    ideaTarget: "20代の営業職"
-  },
-  {
-    id: "post_006",
-    accountId: "acc_003",
-    title: "作品集の構成テンプレート",
-    caption: "採用担当に刺さるポートフォリオの並べ方を紹介します。\n\n#デザイン #ポートフォリオ",
-    status: "draft",
-    day: 18,
-    scheduledAt: null,
-    ideaTarget: "デザイナー志望の学生"
   }
 ];
 

@@ -1,13 +1,32 @@
 "use client";
 
 import { useState } from "react";
+import type { Idea } from "@ama/shared";
 import { Icon } from "./icon";
 import { useWorkspace } from "./workspace-context";
 import { STATUS_LABEL, type MockPost } from "../lib/mock-data";
 
+const IDEA_STATUS_LABEL: Record<Idea["status"], string> = {
+  queued: "アイデア",
+  selected: "採用済み",
+  rejected: "却下",
+  used: "使用済み"
+};
+
 export function PostDetailPanel() {
-  const { posts, selectedPostId, selectPost, openModal, deletePost, approvePost, notify } =
-    useWorkspace();
+  const {
+    posts,
+    ideas,
+    selectedPostId,
+    selectedIdeaId,
+    selectPost,
+    selectIdea,
+    openModal,
+    deletePost,
+    approvePost,
+    notify
+  } = useWorkspace();
+  const idea = ideas.find((item) => item.id === selectedIdeaId) ?? null;
   const post = posts.find((p) => p.id === selectedPostId) ?? null;
   const [shown, setShown] = useState<MockPost | null>(null);
 
@@ -16,7 +35,38 @@ export function PostDetailPanel() {
   }
 
   const display = post ?? shown;
-  const open = post !== null;
+  const open = idea !== null || post !== null;
+
+  if (idea) {
+    return (
+      <aside className="detail open">
+        <div className="detail-sheet">
+          <div className="panel-head">
+            <h3>アイデア</h3>
+            <button aria-label="閉じる" onClick={() => selectIdea(null)}>
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+          <div className="panel-body">
+            <div className="row" style={{ gap: 8, color: "var(--text-secondary)" }}>
+              <span className="dot idea" />
+              {IDEA_STATUS_LABEL[idea.status]}
+            </div>
+            <strong style={{ fontSize: 15 }}>{idea.title}</strong>
+            <div className="stack gap-8">
+              <span className="label">概要</span>
+              <div className="field-box caption-text">{idea.summary}</div>
+            </div>
+            <div className="field-box stack gap-6" style={{ padding: "12px 16px" }}>
+              <span className="small muted">柱: {idea.pillar}</span>
+              <span className="small muted">フック: {idea.hook}</span>
+              <span className="small muted">切り口: {idea.angle}</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <aside className={`detail${open ? " open" : ""}`} aria-hidden={open ? undefined : true} inert={open ? undefined : true}>
