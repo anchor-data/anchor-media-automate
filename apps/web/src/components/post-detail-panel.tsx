@@ -5,6 +5,7 @@ import type { Idea } from "@ama/shared";
 import { Icon } from "./icon";
 import { WorkflowSteps, type WorkflowStep } from "./workflow-steps";
 import { useWorkspace } from "./workspace-context";
+import { canvaDesignUrl } from "../lib/canva";
 import { STATUS_LABEL, type MockPost } from "../lib/mock-data";
 
 const IDEA_STATUS_LABEL: Record<Idea["status"], string> = {
@@ -60,6 +61,7 @@ function SlidePreview({ post, onReload, onRetry }: SlidePreviewProps) {
     );
   }
   const current = Math.min(index, urls.length - 1);
+  const designUrl = canvaDesignUrl(post.canvaDesignId);
   return (
     <div className="stack gap-8">
       {/* eslint-disable-next-line @next/next/no-img-element -- signed Canva CDN URLs, not optimizable */}
@@ -82,6 +84,12 @@ function SlidePreview({ post, onReload, onRetry }: SlidePreviewProps) {
       <button className="btn outline block" onClick={onReload}>
         プレビューを更新（URL期限切れ時）
       </button>
+      {designUrl ? (
+        <a className="btn outline block" href={designUrl} target="_blank" rel="noreferrer">
+          Canvaで開く
+          <Icon name="external-link" size={14} />
+        </a>
+      ) : null}
     </div>
   );
 }

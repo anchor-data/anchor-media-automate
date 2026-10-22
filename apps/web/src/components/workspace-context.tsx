@@ -155,6 +155,10 @@ function assetUrlsOf(assets: readonly PostAsset[]): readonly string[] {
   return [...assets].sort((a, b) => (a.slideIndex ?? 0) - (b.slideIndex ?? 0)).map((a) => a.imageUrl);
 }
 
+function canvaDesignIdOf(assets: readonly PostAsset[]): string | undefined {
+  return assets.find((a) => a.canvaDesignId)?.canvaDesignId;
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : "不明なエラー";
 }
@@ -177,7 +181,8 @@ function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[
     ideaId: post.ideaId,
     generationStatus: post.generationStatus,
     generationError: post.generationError ?? null,
-    assetUrls: assets ? assetUrlsOf(assets) : undefined
+    assetUrls: assets ? assetUrlsOf(assets) : undefined,
+    canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined
   };
 }
 

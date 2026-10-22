@@ -17,6 +17,8 @@ export interface MockPost {
   readonly generationError?: string | null;
   /** Slide image URLs in page order; undefined until loaded from the API. */
   readonly assetUrls?: readonly string[];
+  /** Canva design the slides were rendered from; undefined until loaded from the API. */
+  readonly canvaDesignId?: string;
 }
 
 export interface MockAccount {
