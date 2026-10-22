@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { CanvaTemplateSelect } from "../canva-template-select";
+import { canvaTemplateUrl } from "../../lib/canva";
 import { Icon } from "../icon";
 import { useWorkspace } from "../workspace-context";
 import { SCHEDULE_OPTIONS } from "../../lib/mock-data";
@@ -221,6 +222,16 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
                 {applyingTemplate ? "検証中…" : "テンプレートを適用"}
               </button>
               <span className="muted small">s1_title〜s8_cta の21項目が必要です。不足があると適用できません。</span>
+              {account.canvaTemplateId ? (
+                <a
+                  className="small"
+                  href={canvaTemplateUrl(account.canvaTemplateId)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Canvaで適用中のテンプレートを開く
+                </a>
+              ) : null}
             </div>
           ) : null}
           <div className="tile">

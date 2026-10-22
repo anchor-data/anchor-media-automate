@@ -35,8 +35,8 @@ describe("buildTemplateBrief", () => {
   it("has 8 pages with their character limits", () => {
     expect(brief.pages).toHaveLength(8);
     expect(brief.pages[0]!.fields).toEqual([
-      { name: "s1_title", maxChars: 22 },
-      { name: "s1_sub", maxChars: 24 }
+      { name: "s1_title", maxChars: 20 },
+      { name: "s1_sub", maxChars: 11 }
     ]);
   });
 

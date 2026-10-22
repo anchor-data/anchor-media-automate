@@ -1,6 +1,6 @@
 import { Agent, run, setDefaultOpenAIKey, tool } from "@openai/agents";
 import { z } from "zod";
-import { slideDeckSchema, slideFieldsSchema } from "@ama/shared";
+import { SLIDE_FIELD_LIMITS, slideDeckSchema, slideFieldsSchema } from "@ama/shared";
 import type { Guideline, Idea, Job, PostType, Reference, SlideDeck, SlideFields } from "@ama/shared";
 import { NotConfiguredError } from "./errors";
 import { logOpenAiRunCost } from "./openai-cost";
@@ -112,27 +112,23 @@ export class MockCreationAgent implements CreationAgent {
     const postType = expectedPostType(idea, guideline);
     const job = postType === "job_pick" && idea.jobId ? await tools.getJob(idea.jobId) : null;
 
-    const point = (n: number) => ({
-      num: String(n).padStart(2, "0"),
-      head: clip(`ポイント${n}`, 16),
-      body: clip(`${idea.angle || idea.title}のポイント${n}。${idea.summary}`, 80)
-    });
-    const [p1, p2, p3, p4] = [point(1), point(2), point(3), point(4)];
+    const L = SLIDE_FIELD_LIMITS;
+    const point = (n: number) => `${idea.angle || idea.title}のポイント${n}。${idea.summary}`;
 
     const slides: SlideFields = {
-      s1_title: clip(idea.title, 22),
-      s1_sub: clip(idea.hook || idea.summary, 24),
-      s2_head: clip("こんな悩みありませんか", 18),
-      s2_body: clip(idea.summary, 60),
-      s3_num: p1.num, s3_head: p1.head, s3_body: p1.body,
-      s4_num: p2.num, s4_head: p2.head, s4_body: p2.body,
-      s5_num: p3.num, s5_head: p3.head, s5_body: p3.body,
-      s6_num: p4.num, s6_head: p4.head, s6_body: p4.body,
-      s7_label: job ? "おすすめ求人" : "まとめ",
-      s7_head: clip(job ? `${job.company} ${job.role}` : "今日からできること", 20),
-      s7_body: clip(job ? `${job.location}。詳細は ${job.url}` : "ここまでの内容を保存して見返そう", 80),
-      s8_head: clip("保存して、準備のチェックに使ってね", 40),
-      s8_cta: clip("保存・フォローはこちら", 24)
+      s1_title: clip(idea.title, L.s1_title),
+      s1_sub: clip(idea.hook || idea.summary, L.s1_sub),
+      s2_head: clip("悩んでない?", L.s2_head),
+      s2_body: clip(idea.summary, L.s2_body),
+      s3_num: "1", s3_head: clip("ポイント1", L.s3_head), s3_body: clip(point(1), L.s3_body),
+      s4_num: "2", s4_head: clip("ポイント2", L.s4_head), s4_body: clip(point(2), L.s4_body),
+      s5_num: "3", s5_head: clip("ポイント3", L.s5_head), s5_body: clip(point(3), L.s5_body),
+      s6_num: "4", s6_head: clip("ポイント4", L.s6_head), s6_body: clip(point(4), L.s6_body),
+      s7_label: job ? "求人" : "まとめ",
+      s7_head: clip(job ? `${job.company} ${job.role}` : "今日から", L.s7_head),
+      s7_body: clip(job ? `${job.location}。詳細は ${job.url}` : "保存して見返そう", L.s7_body),
+      s8_head: clip("保存して見返そう", L.s8_head),
+      s8_cta: clip("フォローしてね", L.s8_cta)
     };
 
     const result = validateDeck(
@@ -244,7 +240,7 @@ Rules:
 - Access data only through tools. Never invent guideline, reference or job data.
 - Content style is inspired-by わかる転職 (structure/hooks); never copy brand text or characters.
 - Write in Japanese unless the guideline says otherwise. Respect every NG rule and the CTA/hashtag policy.
-- Slide roles: 1 cover/hook, 2 empathy/problem, 3-6 know-how points (num "01".."04"), 7 job pick OR summary, 8 CTA.
+- Slide roles: 1 cover/hook, 2 empathy/problem, 3-6 know-how points (num "1".."4"), 7 job pick OR summary, 8 CTA.
 - Slide 7: postType job_pick only when the idea has a jobId and guideline.jobPickEnabled; otherwise knowhow with a summary/checklist.
 - Never exceed these limits (count characters, not bytes):
 ${describeSlideLimits()}

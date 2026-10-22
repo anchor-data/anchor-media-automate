@@ -204,29 +204,57 @@ export const ideationRunRequestSchema = z.object({
 });
 export type IdeationRunRequest = z.infer<typeof ideationRunRequestSchema>;
 
+/**
+ * Max characters per autofill field: what fits in the "wakaru carousel template" text boxes
+ * (Japanese, about one em per character). Longer copy overflows its box after Canva autofill.
+ */
+export const SLIDE_FIELD_LIMITS = {
+  s1_title: 20,
+  s1_sub: 11,
+  s2_head: 6,
+  s2_body: 33,
+  s3_num: 1,
+  s3_head: 4,
+  s3_body: 42,
+  s4_num: 1,
+  s4_head: 5,
+  s4_body: 40,
+  s5_num: 1,
+  s5_head: 6,
+  s5_body: 45,
+  s6_num: 1,
+  s6_head: 5,
+  s6_body: 40,
+  s7_label: 4,
+  s7_head: 5,
+  s7_body: 36,
+  s8_head: 8,
+  s8_cta: 7
+} as const;
+
 /** Validated 8-slide deck for Canva autofill (4:5 hybrid). */
 export const slideFieldsSchema = z.object({
-  s1_title: z.string().max(22),
-  s1_sub: z.string().max(24),
-  s2_head: z.string().max(18),
-  s2_body: z.string().max(60),
-  s3_num: z.string().max(2),
-  s3_head: z.string().max(16),
-  s3_body: z.string().max(80),
-  s4_num: z.string().max(2),
-  s4_head: z.string().max(16),
-  s4_body: z.string().max(80),
-  s5_num: z.string().max(2),
-  s5_head: z.string().max(16),
-  s5_body: z.string().max(80),
-  s6_num: z.string().max(2),
-  s6_head: z.string().max(16),
-  s6_body: z.string().max(80),
-  s7_label: z.string().max(12),
-  s7_head: z.string().max(20),
-  s7_body: z.string().max(80),
-  s8_head: z.string().max(40),
-  s8_cta: z.string().max(24)
+  s1_title: z.string().max(SLIDE_FIELD_LIMITS.s1_title),
+  s1_sub: z.string().max(SLIDE_FIELD_LIMITS.s1_sub),
+  s2_head: z.string().max(SLIDE_FIELD_LIMITS.s2_head),
+  s2_body: z.string().max(SLIDE_FIELD_LIMITS.s2_body),
+  s3_num: z.string().max(SLIDE_FIELD_LIMITS.s3_num),
+  s3_head: z.string().max(SLIDE_FIELD_LIMITS.s3_head),
+  s3_body: z.string().max(SLIDE_FIELD_LIMITS.s3_body),
+  s4_num: z.string().max(SLIDE_FIELD_LIMITS.s4_num),
+  s4_head: z.string().max(SLIDE_FIELD_LIMITS.s4_head),
+  s4_body: z.string().max(SLIDE_FIELD_LIMITS.s4_body),
+  s5_num: z.string().max(SLIDE_FIELD_LIMITS.s5_num),
+  s5_head: z.string().max(SLIDE_FIELD_LIMITS.s5_head),
+  s5_body: z.string().max(SLIDE_FIELD_LIMITS.s5_body),
+  s6_num: z.string().max(SLIDE_FIELD_LIMITS.s6_num),
+  s6_head: z.string().max(SLIDE_FIELD_LIMITS.s6_head),
+  s6_body: z.string().max(SLIDE_FIELD_LIMITS.s6_body),
+  s7_label: z.string().max(SLIDE_FIELD_LIMITS.s7_label),
+  s7_head: z.string().max(SLIDE_FIELD_LIMITS.s7_head),
+  s7_body: z.string().max(SLIDE_FIELD_LIMITS.s7_body),
+  s8_head: z.string().max(SLIDE_FIELD_LIMITS.s8_head),
+  s8_cta: z.string().max(SLIDE_FIELD_LIMITS.s8_cta)
 });
 export type SlideFields = z.infer<typeof slideFieldsSchema>;
 
