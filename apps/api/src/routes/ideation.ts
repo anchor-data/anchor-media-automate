@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { createRepository } from "@ama/db";
 import {
   createIdeationAgent,
+  usedTopicKeys,
+  withoutDuplicateIdeas,
   type IdeationToolContext
 } from "@ama/integrations";
 import type { AgentRun } from "@ama/shared";
@@ -172,12 +174,27 @@ ideationRoutes.post("/ideation/run", async (c) => {
     getMemory: (accountId) => repo.listMemory(accountId),
     getPreviousPosts: (accountId, limit) => repo.listPostsByAccount(accountId, limit),
     getCandidateJobs: () => repo.listJobs(),
-    listQueuedIdeas: (accountId) => repo.listIdeas(accountId, "queued")
+    listQueuedIdeas: (accountId) => repo.listIdeas(accountId)
   };
 
   try {
     const output = await agent.run(parsed.data, tools);
-    const ideas = await repo.createIdeas(output.ideas);
+    const [memory, posts, existingIdeas] = await Promise.all([
+      repo.listMemory(parsed.data.accountId),
+      repo.listPostsByAccount(parsed.data.accountId, 50),
+      repo.listIdeas(parsed.data.accountId)
+    ]);
+    const { kept, skipped } = withoutDuplicateIdeas(
+      output.ideas,
+      usedTopicKeys(memory, posts, existingIdeas)
+    );
+    if (kept.length === 0) {
+      throw new Error("No new ideas could be generated (all candidates duplicate existing topics)");
+    }
+    const ideas = await repo.createIdeas(kept);
+    if (skipped.length > 0) {
+      output.reasoning.push(`Stored only new ideas. Dropped duplicates: ${skipped.join(" / ")}`);
+    }
     const run: AgentRun = {
       id: `run_${crypto.randomUUID()}`,
       accountId: parsed.data.accountId,

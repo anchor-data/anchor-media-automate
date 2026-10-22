@@ -4,6 +4,8 @@ export {
   createIdeationAgent,
   MockIdeationAgent,
   OpenAIIdeationAgent,
+  usedTopicKeys,
+  withoutDuplicateIdeas,
   type IdeationAgent,
   type IdeationCandidate,
   type IdeationRunInput,

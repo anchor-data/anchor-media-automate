@@ -68,24 +68,53 @@ function normalizeTopicKey(value: string): string {
     .slice(0, 80);
 }
 
-function usedTopicKeys(
+function addBlockedKey(keys: Set<string>, value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return;
+  keys.add(trimmed);
+  const normalized = normalizeTopicKey(trimmed);
+  if (normalized) keys.add(normalized);
+}
+
+/** Topic keys and titles already used by memory, posts, or any stored idea. */
+export function usedTopicKeys(
   memory: MemoryItem[],
   posts: Post[],
-  queued: Idea[]
+  ideas: Idea[]
 ): Set<string> {
   const keys = new Set<string>();
   for (const item of memory) {
-    if (item.kind === "topic_used" || item.kind === "idea_rejected") {
-      keys.add(item.topicKey);
+    if (item.kind === "topic_used" || item.kind === "idea_rejected" || item.kind === "hook_used") {
+      addBlockedKey(keys, item.topicKey);
     }
   }
   for (const post of posts) {
-    keys.add(normalizeTopicKey(post.title));
+    addBlockedKey(keys, post.title);
   }
-  for (const idea of queued) {
-    keys.add(idea.topicKey);
+  for (const idea of ideas) {
+    addBlockedKey(keys, idea.topicKey);
+    addBlockedKey(keys, idea.title);
   }
   return keys;
+}
+
+export function withoutDuplicateIdeas<T extends { topicKey: string; title: string }>(
+  candidates: readonly T[],
+  blocked: Set<string>
+): { kept: T[]; skipped: string[] } {
+  const seen = new Set(blocked);
+  const kept: T[] = [];
+  const skipped: string[] = [];
+  for (const idea of candidates) {
+    const keys = [idea.topicKey, normalizeTopicKey(idea.topicKey), normalizeTopicKey(idea.title)];
+    if (keys.some((key) => key && seen.has(key))) {
+      skipped.push(idea.title);
+      continue;
+    }
+    for (const key of keys) addBlockedKey(seen, key);
+    kept.push(idea);
+  }
+  return { kept, skipped };
 }
 
 /** Deterministic ideation for local/CI — no OpenAI required. */
@@ -218,8 +247,15 @@ export class OpenAIIdeationAgent implements IdeationAgent {
     setDefaultOpenAIKey(this.apiKey);
 
     const accountId = input.accountId;
+    const [memory, posts, existingIdeas] = await Promise.all([
+      tools.getMemory(accountId),
+      tools.getPreviousPosts(accountId, 50),
+      tools.listQueuedIdeas(accountId)
+    ]);
+    const blocked = usedTopicKeys(memory, posts, existingIdeas);
     type SubmittedPayload = z.infer<typeof submitIdeasSchema>;
     const submission: { value: SubmittedPayload | null } = { value: null };
+    let rejection: string | null = null;
 
     const get_guideline = tool({
       name: "get_guideline",
@@ -282,7 +318,8 @@ export class OpenAIIdeationAgent implements IdeationAgent {
 
     const check_duplicate = tool({
       name: "check_duplicate",
-      description: "Check whether a topicKey or title is already used in memory, posts, or idea queue.",
+      description:
+        "Check whether a topicKey or title matches any stored idea, post, or memory item. Call this for every candidate before submit_ideas.",
       parameters: z.object({
         topicKey: z.string(),
         title: z.string()
@@ -306,24 +343,40 @@ export class OpenAIIdeationAgent implements IdeationAgent {
     const submit_ideas = tool({
       name: "submit_ideas",
       description:
-        "Submit the final ideation result. Call this ONCE after research tools. Must include exactly the requested number of ideas.",
+        "Submit the final ideation result. Rejects topic keys or titles that already exist. If this returns ok: false, replace the rejected ideas and call it again.",
       parameters: submitIdeasSchema,
       execute: async (payload) => {
         const parsed = submitIdeasSchema.safeParse(payload);
         if (!parsed.success) {
+          rejection = parsed.error.message;
           return {
             ok: false,
             error: parsed.error.message,
             hint: "Provide summary (string), reasoning (string[]), ideas (array of objects with title, summary, pillar, topicKey, hook, angle, referenceIds[], jobId null|string, rationale, score null|number)."
           };
         }
-        if (parsed.data.ideas.length < 1) {
-          return { ok: false, error: "ideas must contain at least 1 item" };
+        const normalized = parsed.data.ideas.map((idea) => ({
+          ...idea,
+          title: idea.title.trim(),
+          topicKey: (idea.topicKey || "").trim() || normalizeTopicKey(idea.title)
+        }));
+        const { kept, skipped } = withoutDuplicateIdeas(normalized, blocked);
+        if (skipped.length > 0 || kept.length < input.count) {
+          rejection = `Duplicates rejected: ${skipped.join(" / ") || "not enough unique ideas"}`;
+          return {
+            ok: false,
+            accepted: 0,
+            requiredCount: input.count,
+            duplicateTitles: skipped,
+            message:
+              "These ideas match an existing topic key or title. Replace only the duplicates with new topics, then call submit_ideas again with the full set."
+          };
         }
-        submission.value = parsed.data;
+        submission.value = { ...parsed.data, ideas: kept };
+        rejection = null;
         return {
           ok: true,
-          accepted: submission.value.ideas.length,
+          accepted: kept.length,
           message: "Ideas accepted. Stop after this tool."
         };
       }
@@ -337,7 +390,7 @@ export class OpenAIIdeationAgent implements IdeationAgent {
 Architecture rules:
 - You ONLY access data through tools (never invent guideline/reference/memory).
 - Humans own guideline and references; you read them.
-- Memory and previous posts are for dedupe — do not repeat topicKey/titles.
+- Memory, previous posts, and every stored idea (queued, selected, used, or rejected) are for dedupe. Never repeat a topicKey or title.
 - Content style is inspired-by わかる転職 genre (structure/hooks), never copy brand text or characters.
 - Prefer knowhow carousel ideas. Jobs are optional; ignore jobs unless guideline.jobPickEnabled and candidates exist.
 - topicKey must be stable ascii keys with dots (e.g. prep.before_quit.three_steps). If unsure, derive from title.
@@ -347,9 +400,9 @@ Architecture rules:
 
 Required workflow:
 1) Call get_guideline, list_references, get_memory, get_previous_posts.
-2) Optionally get_candidate_jobs / check_duplicate.
-3) Finish by calling submit_ideas exactly once with summary, reasoning[], and ideas[].
-4) Do not answer in free text — the submit_ideas tool is your final output.`,
+2) Optionally get_candidate_jobs. Call check_duplicate for each candidate topicKey and title.
+3) Call submit_ideas with exactly the requested number of ideas. If it returns ok: false, replace the rejected ideas and call submit_ideas again. Do not finish until it returns ok: true.
+4) Do not answer in free text — submit_ideas is your final output.`,
       tools: [
         get_guideline,
         list_references,
@@ -359,7 +412,14 @@ Required workflow:
         check_duplicate,
         submit_ideas
       ],
-      toolUseBehavior: { stopAtToolNames: ["submit_ideas"] }
+      toolUseBehavior: () =>
+        submission.value
+          ? {
+              isFinalOutput: true,
+              isInterrupted: undefined,
+              finalOutput: submission.value.summary
+            }
+          : { isFinalOutput: false, isInterrupted: undefined }
     });
 
     const userMessage = [
@@ -367,23 +427,25 @@ Required workflow:
       `Generate exactly ${input.count} Instagram carousel ideas.`,
       `Then call submit_ideas with exactly ${input.count} ideas.`,
       input.seedText ? `Operator seed text:\n${input.seedText}` : "No seed text.",
-      input.seedUrl ? `Optional seed URL: ${input.seedUrl}` : "No seed URL."
+      input.seedUrl ? `Optional seed URL: ${input.seedUrl}` : "No seed URL.",
+      blocked.size > 0
+        ? `Already used topic keys and titles. Do not submit any of these:\n${[...blocked].slice(0, 120).join("\n")}`
+        : "No existing topics to avoid."
     ].join("\n\n");
 
     try {
-      await run(agent, userMessage, { maxTurns: 16 });
+      await run(agent, userMessage, { maxTurns: 20 });
     } catch (error) {
       // If the model still produced a tool payload we captured, prefer that over a hard fail.
       if (!submission.value) {
-        const message = error instanceof Error ? error.message : "Ideation agent failed";
-        throw new Error(message);
+        throw new Error(rejection ?? (error instanceof Error ? error.message : "Ideation agent failed"));
       }
     }
 
     const submitted = submission.value;
     if (!submitted) {
       throw new Error(
-        "Ideation agent finished without calling submit_ideas. Retry the request."
+        rejection ?? "Ideation agent finished without a duplicate-free submit_ideas result. Retry the request."
       );
     }
 
@@ -403,14 +465,20 @@ Required workflow:
       rationale: idea.rationale?.trim() || "Generated by OpenAI Agents"
     }));
 
-    if (ideas.length === 0) {
-      throw new Error("OpenAI Agents returned no ideas");
+    const { kept, skipped } = withoutDuplicateIdeas(ideas, blocked);
+    if (kept.length === 0) {
+      throw new Error("No new ideas could be generated (all candidates duplicate existing topics)");
     }
 
     return {
       summary: submitted.summary,
-      ideas,
-      reasoning: [...submitted.reasoning, "mode=openai-agents", "via=submit_ideas"]
+      ideas: kept,
+      reasoning: [
+        ...submitted.reasoning,
+        "mode=openai-agents",
+        "via=submit_ideas",
+        skipped.length > 0 ? `Dropped duplicates: ${skipped.join(" / ")}` : "No duplicates dropped"
+      ]
     };
   }
 }
