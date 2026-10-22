@@ -1,17 +1,18 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "ama-api",
+  "name": "anchor-media-api",
   "main": "src/index.ts",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "anchor-media.anchor-ltd.tech/api/*",
+      "zone_name": "anchor-ltd.tech"
+    }
+  ],
   "compatibility_date": "2026-10-11",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "TURSO_DATABASE_URL": "",
-    "TURSO_AUTH_TOKEN": "",
-    "OPENAI_API_KEY": "",
-    "CANVA_CLIENT_ID": "",
-    "CANVA_CLIENT_SECRET": "",
-    "CANVA_REFRESH_TOKEN": "",
-    "INSTAGRAM_ACCESS_TOKEN": "",
-    "ALLOWED_ORIGIN": "*"
+    "ALLOWED_ORIGIN": "https://anchor-media.anchor-ltd.tech"
   }
 }

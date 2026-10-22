@@ -11,8 +11,7 @@ import type {
   ReferenceCreate
 } from "@ama/shared";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8787";
+const API_BASE_URL = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {

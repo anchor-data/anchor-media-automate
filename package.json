@@ -7,6 +7,9 @@
     "dev": "pnpm -r --parallel --filter @ama/api --filter @ama/web dev",
     "dev:api": "pnpm --filter @ama/api dev",
     "dev:web": "pnpm --filter @ama/web dev",
+    "deploy:api": "pnpm --filter @ama/api cf:deploy",
+    "deploy:web": "pnpm --filter @ama/web cf:deploy",
+    "deploy": "pnpm deploy:api && pnpm deploy:web",
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck"

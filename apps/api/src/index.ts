@@ -217,4 +217,8 @@ async function regenerate_post(
   });
 }
 
-export default app;
+// Served under /api so the web app and API can share one hostname.
+const root = new Hono<{ Bindings: Bindings }>();
+root.route("/api", app);
+
+export default root;
