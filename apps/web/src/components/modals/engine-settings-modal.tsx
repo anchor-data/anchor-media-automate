@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { CanvaTemplateSelect } from "../canva-template-select";
 import { Icon } from "../icon";
 import { useWorkspace } from "../workspace-context";
 import { SCHEDULE_OPTIONS } from "../../lib/mock-data";
@@ -18,6 +19,7 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
     addReference,
     removeReference,
     removeMemory,
+    saveCanvaTemplate,
     apiReady
   } = useWorkspace();
   const account = accounts.find((a) => a.id === accountId);
@@ -29,6 +31,8 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
   const [refTitle, setRefTitle] = useState("");
   const [refBody, setRefBody] = useState("");
   const [saving, setSaving] = useState(false);
+  const [templateId, setTemplateId] = useState(account?.canvaTemplateId ?? "");
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
 
   if (!account) return null;
 
@@ -196,6 +200,29 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
               ))}
             </select>
           </div>
+          {apiReady ? (
+            <div className="tile stack gap-8">
+              <span className="label">Canvaテンプレート</span>
+              <CanvaTemplateSelect value={templateId} onChange={setTemplateId} disabled={applyingTemplate} />
+              <button
+                className="btn outline"
+                type="button"
+                disabled={applyingTemplate || !templateId || templateId === account.canvaTemplateId}
+                onClick={() => {
+                  setApplyingTemplate(true);
+                  void saveCanvaTemplate(account.id, templateId)
+                    .then(() => notify("テンプレートを適用しました"))
+                    .catch((error: unknown) =>
+                      notify(error instanceof Error ? error.message : "テンプレートの適用に失敗しました")
+                    )
+                    .finally(() => setApplyingTemplate(false));
+                }}
+              >
+                {applyingTemplate ? "検証中…" : "テンプレートを適用"}
+              </button>
+              <span className="muted small">s1_title〜s8_cta の21項目が必要です。不足があると適用できません。</span>
+            </div>
+          ) : null}
           <div className="tile">
             <span className="label">システムプロンプト</span>
             <textarea

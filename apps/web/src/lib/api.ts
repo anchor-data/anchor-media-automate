@@ -131,6 +131,28 @@ export async function approvePost(postId: string) {
   return request<{ item: Post }>(`/posts/${postId}/approve`, { method: "POST" });
 }
 
+export type BrandTemplate = { id: string; title: string; thumbnailUrl: string | null };
+
+export async function listBrandTemplates() {
+  return request<{ items: BrandTemplate[]; mode: string }>("/canva/brand-templates");
+}
+
+export async function createAccountApi(body: {
+  name: string;
+  instagramHandle: string;
+  tone: string;
+  canvaTemplateId: string;
+}) {
+  return request<{ item: Account }>("/accounts", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function putCanvaTemplate(accountId: string, templateId: string) {
+  return request<{ item: Account }>(`/accounts/${accountId}/canva-template`, {
+    method: "PUT",
+    body: JSON.stringify({ templateId })
+  });
+}
+
 export type PostDetail = { post: Post; assets: PostAsset[] };
 
 export async function getPostDetail(postId: string) {

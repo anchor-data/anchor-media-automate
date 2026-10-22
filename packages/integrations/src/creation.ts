@@ -3,6 +3,7 @@ import { z } from "zod";
 import { slideDeckSchema, slideFieldsSchema } from "@ama/shared";
 import type { Guideline, Idea, Job, PostType, Reference, SlideDeck, SlideFields } from "@ama/shared";
 import { NotConfiguredError } from "./errors";
+import { logOpenAiRunCost } from "./openai-cost";
 
 export type CreationToolContext = {
   getIdea: (ideaId: string) => Promise<Idea | null>;
@@ -269,8 +270,10 @@ Required workflow:
       .join("\n\n");
 
     try {
-      await run(agent, userMessage, { maxTurns: 20 });
+      const result = await run(agent, userMessage, { maxTurns: 20 });
+      logOpenAiRunCost("creation", agent.model, result);
     } catch (error) {
+      logOpenAiRunCost("creation", agent.model, error);
       if (!state.accepted) {
         throw new Error(error instanceof Error ? error.message : "Creation agent failed");
       }

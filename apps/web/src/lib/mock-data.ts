@@ -29,6 +29,8 @@ export interface MockAccount {
   readonly systemPrompt: string;
   readonly memory: readonly string[];
   readonly ideaQueue: readonly string[];
+  /** Canva brand template this account renders with (API accounts only). */
+  readonly canvaTemplateId?: string;
 }
 
 export interface IdeaCandidate {

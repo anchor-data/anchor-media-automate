@@ -39,6 +39,7 @@ export interface Repository {
   getAccount(accountId: string): Promise<Account | null>;
   listAccounts(): Promise<Account[]>;
   createAccount(account: Account): Promise<Account>;
+  updateAccountTemplate(accountId: string, canvaTemplateId: string): Promise<Account | null>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
     postId: string,
@@ -149,6 +150,13 @@ class MockRepository implements Repository {
   }
   async listAccounts() {
     return this.accounts;
+  }
+  async updateAccountTemplate(accountId: string, canvaTemplateId: string) {
+    const index = this.accounts.findIndex((a) => a.id === accountId);
+    if (index < 0) return null;
+    const updated = { ...this.accounts[index]!, canvaTemplateId };
+    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
+    return updated;
   }
   async createAccount(account: Account) {
     if (this.accounts.some((a) => a.id === account.id)) {
@@ -473,6 +481,14 @@ class TursoRepository implements Repository {
       "SELECT id, name, instagram_handle, canva_template_id, tone FROM accounts ORDER BY created_at DESC"
     );
     return result.rows.map(mapAccountRow);
+  }
+
+  async updateAccountTemplate(accountId: string, canvaTemplateId: string) {
+    await this.client.execute({
+      sql: "UPDATE accounts SET canva_template_id = ?, updated_at = ? WHERE id = ?",
+      args: [canvaTemplateId, nowIso(), accountId]
+    });
+    return this.getAccount(accountId);
   }
 
   async createAccount(account: Account) {

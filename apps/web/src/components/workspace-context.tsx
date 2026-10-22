@@ -12,6 +12,7 @@ import {
 import type { Guideline, Idea, MemoryItem, Post, PostAsset, Reference } from "@ama/shared";
 import {
   approvePost as approvePostApi,
+  createAccountApi,
   createContent,
   createReference,
   deleteMemory,
@@ -23,6 +24,7 @@ import {
   listMemory,
   listReferences,
   patchIdea,
+  putCanvaTemplate,
   putGuideline,
   regeneratePost,
   renderPost,
@@ -69,8 +71,10 @@ interface WorkspaceValue {
     schedule: string,
     target: string,
     concept: string,
-    title?: string
-  ) => void;
+    title?: string,
+    canvaTemplateId?: string
+  ) => Promise<void>;
+  saveCanvaTemplate: (accountId: string, templateId: string) => Promise<void>;
   updateAccount: (id: string, patch: Partial<MockAccount>) => void;
   updatePost: (id: string, patch: Partial<MockPost>) => void;
   deletePost: (id: string) => void;
@@ -213,7 +217,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setAccounts((prev) =>
       prev.map((a) =>
         a.id === accountId
-          ? mapAccount(accountId, a.handle, guideItem, mem.items, ideaList.items, a)
+          ? {
+              ...mapAccount(accountId, a.handle, guideItem, mem.items, ideaList.items, a),
+              canvaTemplateId: a.canvaTemplateId
+            }
           : a
       )
     );
@@ -235,8 +242,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
         const mappedAccounts =
           bundle.accounts.length > 0
-            ? bundle.accounts.map((acc) =>
-                mapAccount(
+            ? bundle.accounts.map((acc) => ({
+                ...mapAccount(
                   acc.id,
                   acc.instagramHandle.startsWith("@")
                     ? acc.instagramHandle
@@ -245,8 +252,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                   acc.id === (bundle.accounts[0]?.id ?? "") ? bundle.memory : [],
                   acc.id === (bundle.accounts[0]?.id ?? "") ? bundle.ideas : [],
                   INITIAL_ACCOUNTS.find((a) => a.id === acc.id)
-                )
-              )
+                ),
+                canvaTemplateId: acc.canvaTemplateId
+              }))
             : INITIAL_ACCOUNTS;
 
         setAccounts(mappedAccounts);
@@ -352,24 +360,54 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       closeModal: () => setModal({ kind: "none" }),
       notify,
       refreshAccountSideData,
-      addAccount: (handle, schedule, target, concept, title) => {
-        const id = `acc_${Date.now()}`;
+      addAccount: async (handle, schedule, target, concept, title, canvaTemplateId) => {
         const clean = handle.trim().replace(/^@?/, "@");
+        const label = title?.trim() || concept.trim() || target.trim() || "新規アカウント";
+        let id = `acc_${Date.now()}`;
+        if (apiReady) {
+          if (!canvaTemplateId) throw new Error("Canvaテンプレートを選択してください");
+          const created = await createAccountApi({
+            name: label,
+            instagramHandle: clean,
+            tone: "やさしく実践的",
+            canvaTemplateId
+          });
+          id = created.item.id;
+          // Ideation needs a guideline; empty fields fall back so the account is usable right away.
+          await putGuideline(id, {
+            target: target.trim() || "未設定",
+            concept: concept.trim() || "未設定",
+            tone: "やさしく実践的",
+            contentPillars: [],
+            ngRules: [],
+            ctaPolicy: "",
+            hashtagPolicy: "",
+            jobPickEnabled: false,
+            systemPrompt: DEFAULT_PROMPT
+          });
+        }
         const account: MockAccount = {
           id,
           handle: clean,
-          title: title?.trim() || concept.trim() || target.trim() || "新規アカウント",
+          title: label,
           target: target.trim(),
           concept: concept.trim(),
           schedule,
           systemPrompt: DEFAULT_PROMPT,
           memory: [],
-          ideaQueue: []
+          ideaQueue: [],
+          canvaTemplateId
         };
         setAccounts((prev) => [...prev, account]);
         setActiveAccountId(id);
         setSelectedPostId(null);
         setSelectedIdeaId(null);
+      },
+      saveCanvaTemplate: async (accountId, templateId) => {
+        await putCanvaTemplate(accountId, templateId);
+        setAccounts((prev) =>
+          prev.map((a) => (a.id === accountId ? { ...a, canvaTemplateId: templateId } : a))
+        );
       },
       updateAccount: (id, patch) =>
         setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a))),

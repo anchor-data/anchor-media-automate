@@ -1,3 +1,4 @@
+import { slideFieldsSchema } from "@ama/shared";
 import { NotConfiguredError } from "./errors";
 
 /**
@@ -11,6 +12,7 @@ import { NotConfiguredError } from "./errors";
 export const CANVA_BASE_URL = "https://api.canva.com/rest/v1";
 export const DESIGN_PAGES_CACHE_TTL_MS = 60 * 60 * 1000;
 
+const MAX_TEMPLATE_PAGES = 5;
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ATTEMPTS = 40;
 const TOKEN_EXPIRY_MARGIN_MS = 60_000;
@@ -27,6 +29,16 @@ export interface CanvaDesignCache {
   set(designId: string, urls: string[]): Promise<void>;
 }
 
+export type CanvaBrandTemplate = { id: string; title: string; thumbnailUrl: string | null };
+
+/** Autofill field names a brand template must expose (s1_title … s8_cta). */
+export const REQUIRED_TEMPLATE_FIELDS: readonly string[] = Object.keys(slideFieldsSchema.shape);
+
+export function missingTemplateFields(available: readonly string[]): string[] {
+  const have = new Set(available);
+  return REQUIRED_TEMPLATE_FIELDS.filter((name) => !have.has(name));
+}
+
 export type CanvaThumbnail = { url: string; width: number; height: number };
 
 export interface CanvaClient {
@@ -39,6 +51,9 @@ export interface CanvaClient {
   /** PNG URL for every page of the design, in page order. */
   exportPages(designId: string): Promise<string[]>;
   getThumbnail(designId: string): Promise<CanvaThumbnail | null>;
+  listBrandTemplates(): Promise<CanvaBrandTemplate[]>;
+  /** Names of the autofill data fields defined on a brand template. */
+  getTemplateFieldNames(templateId: string): Promise<string[]>;
 }
 
 /** Autofill `data` payload: every field is a Canva text data field. */
@@ -83,6 +98,12 @@ export class MockCanvaClient implements CanvaClient {
   }
   async getThumbnail(designId: string) {
     return { url: `https://images.example.com/${designId}/thumb.png`, width: 1080, height: 1350 };
+  }
+  async listBrandTemplates() {
+    return [{ id: "tpl_wakaru_explainer_v1", title: "wakaru-explainer hybrid v1 (mock)", thumbnailUrl: null }];
+  }
+  async getTemplateFieldNames() {
+    return [...REQUIRED_TEMPLATE_FIELDS];
   }
 }
 
@@ -169,6 +190,33 @@ export class CanvaApiClient implements CanvaClient {
     const thumbnail = response.design?.thumbnail;
     if (!thumbnail?.url) return null;
     return { url: thumbnail.url, width: thumbnail.width ?? 0, height: thumbnail.height ?? 0 };
+  }
+
+  async listBrandTemplates(): Promise<CanvaBrandTemplate[]> {
+    type Page = {
+      items?: Array<{ id: string; title?: string; thumbnail?: { url?: string } }>;
+      continuation?: string;
+    };
+    const templates: CanvaBrandTemplate[] = [];
+    let continuation: string | undefined;
+    for (let page = 0; page < MAX_TEMPLATE_PAGES; page++) {
+      const query = new URLSearchParams({ limit: "50", ...(continuation ? { continuation } : {}) });
+      const response = await this.request<Page>("GET", `/brand-templates?${query}`);
+      for (const item of response.items ?? []) {
+        templates.push({ id: item.id, title: item.title ?? item.id, thumbnailUrl: item.thumbnail?.url ?? null });
+      }
+      continuation = response.continuation;
+      if (!continuation) break;
+    }
+    return templates;
+  }
+
+  async getTemplateFieldNames(templateId: string): Promise<string[]> {
+    const response = await this.request<{ dataset?: Record<string, unknown> }>(
+      "GET",
+      `/brand-templates/${encodeURIComponent(templateId)}/dataset`
+    );
+    return Object.keys(response.dataset ?? {});
   }
 
   private async poll(path: string, initial: CanvaJob): Promise<CanvaJob> {

@@ -6,6 +6,8 @@ import { agentRunRequestSchema } from "@ama/shared";
 import { createAgentRunner, createInstagramClient } from "@ama/integrations";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "./lib/env";
+import { accountRoutes } from "./routes/accounts";
+import { canvaRoutes } from "./routes/canva";
 import { creationRoutes } from "./routes/creation";
 import { ideationRoutes } from "./routes/ideation";
 
@@ -17,6 +19,8 @@ app.use("*", async (c, next) => {
 
 app.route("/", ideationRoutes);
 app.route("/", creationRoutes);
+app.route("/", canvaRoutes);
+app.route("/", accountRoutes);
 
 app.get("/health", (c) => {
   return c.json({

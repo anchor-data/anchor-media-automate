@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CanvaApiClient,
+  REQUIRED_TEMPLATE_FIELDS,
+  missingTemplateFields,
   resolveCanvaDesignId,
   toAutofillData,
   type CanvaDesignCache,
@@ -233,5 +235,40 @@ describe("CanvaApiClient autofill and export", () => {
       fetchImpl: routedFetch({ ...tokenRoute, "/designs/D1": () => json({ design: {} }) }) as unknown as typeof fetch
     });
     expect(await client.getThumbnail("D1")).toBeNull();
+  });
+});
+
+describe("brand templates", () => {
+  const tokenRoute = { "/oauth/token": () => json({ access_token: "at" }) };
+  const client = (routes: Record<string, (init?: RequestInit) => Response>) =>
+    new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: memoryStore("rt"),
+      fetchImpl: routedFetch({ ...tokenRoute, ...routes }) as unknown as typeof fetch
+    });
+
+  it("requires all 21 slide fields", () => {
+    expect(REQUIRED_TEMPLATE_FIELDS).toHaveLength(21);
+    expect(missingTemplateFields(REQUIRED_TEMPLATE_FIELDS)).toEqual([]);
+    expect(missingTemplateFields(["s1_title"])).toContain("s8_cta");
+  });
+
+  it("lists templates across pages", async () => {
+    const result = await client({
+      "?limit=50": () =>
+        json({ items: [{ id: "T1", title: "One", thumbnail: { url: "https://t/1" } }], continuation: "c2" }),
+      "&continuation=c2": () => json({ items: [{ id: "T2" }] })
+    }).listBrandTemplates();
+    expect(result.map((t) => t.id)).toEqual(["T1", "T2"]);
+    expect(result[0]!.thumbnailUrl).toBe("https://t/1");
+    expect(result[1]!.title).toBe("T2");
+  });
+
+  it("reads dataset field names", async () => {
+    const names = await client({
+      "/brand-templates/T1/dataset": () => json({ dataset: { s1_title: { type: "text" }, s1_sub: { type: "text" } } })
+    }).getTemplateFieldNames("T1");
+    expect(names).toEqual(["s1_title", "s1_sub"]);
   });
 });
