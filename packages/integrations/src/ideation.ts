@@ -32,6 +32,10 @@ export interface IdeationAgent {
   run(input: IdeationRunInput, tools: IdeationToolContext): Promise<IdeationRunOutput>;
 }
 
+/**
+ * Tool parameter schemas must be OpenAI strict-JSON friendly:
+ * prefer `.nullable()` over `.optional()` / `.default()`.
+ */
 const ideationIdeaSchema = z.object({
   title: z.string(),
   summary: z.string(),
@@ -42,13 +46,18 @@ const ideationIdeaSchema = z.object({
   referenceIds: z.array(z.string()),
   jobId: z.string().nullable(),
   rationale: z.string(),
-  score: z.number().min(0).max(1).optional()
+  score: z.number().nullable()
 });
 
-const ideationOutputSchema = z.object({
+const submitIdeasSchema = z.object({
   summary: z.string(),
   reasoning: z.array(z.string()),
-  ideas: z.array(ideationIdeaSchema).min(1).max(10)
+  ideas: z.array(ideationIdeaSchema)
+});
+
+/** Empty tool args — avoid bare `{}` (strict JSON schema quirks). */
+const emptyArgsSchema = z.object({
+  confirm: z.boolean().nullable()
 });
 
 function normalizeTopicKey(value: string): string {
@@ -195,7 +204,8 @@ export class MockIdeationAgent implements IdeationAgent {
 
 /**
  * OpenAI Agents SDK ideation — tools are Backend-owned (architecture_v1).
- * Agent must call read tools, then return structured ideas (no direct DB writes).
+ * Final ideas are submitted via `submit_ideas` tool (more reliable than outputType
+ * after multi-tool turns, which often hit "Invalid output type" schema mismatches).
  */
 export class OpenAIIdeationAgent implements IdeationAgent {
   mode: "openai" = "openai";
@@ -208,10 +218,13 @@ export class OpenAIIdeationAgent implements IdeationAgent {
     setDefaultOpenAIKey(this.apiKey);
 
     const accountId = input.accountId;
+    type SubmittedPayload = z.infer<typeof submitIdeasSchema>;
+    const submission: { value: SubmittedPayload | null } = { value: null };
+
     const get_guideline = tool({
       name: "get_guideline",
       description: "Load the active human-authored guideline for this Instagram account.",
-      parameters: z.object({}),
+      parameters: emptyArgsSchema,
       execute: async () => {
         const guideline = await tools.getGuideline(accountId);
         if (!guideline) throw new Error("No active guideline");
@@ -227,7 +240,6 @@ export class OpenAIIdeationAgent implements IdeationAgent {
         kind: z
           .enum(["slide_pattern", "hook_pattern", "voice_sample", "doc", "url_note"])
           .nullable()
-          .optional()
       }),
       execute: async ({ kind }) => {
         const refs = await tools.listReferences(accountId);
@@ -239,7 +251,7 @@ export class OpenAIIdeationAgent implements IdeationAgent {
       name: "get_memory",
       description:
         "Load memory items used for dedupe and learning (topic_used, idea_rejected, preferences).",
-      parameters: z.object({}),
+      parameters: emptyArgsSchema,
       execute: async () => tools.getMemory(accountId)
     });
 
@@ -247,10 +259,10 @@ export class OpenAIIdeationAgent implements IdeationAgent {
       name: "get_previous_posts",
       description: "Recent posts for this account to avoid repeating topics.",
       parameters: z.object({
-        limit: z.number().int().positive().max(50).default(20)
+        limit: z.number().int().positive().max(50).nullable()
       }),
       execute: async ({ limit }) => {
-        const posts = await tools.getPreviousPosts(accountId, limit);
+        const posts = await tools.getPreviousPosts(accountId, limit ?? 20);
         return posts.map((p) => ({
           id: p.id,
           title: p.title,
@@ -264,7 +276,7 @@ export class OpenAIIdeationAgent implements IdeationAgent {
       name: "get_candidate_jobs",
       description:
         "Optional job listings. Usually empty; only use for job_pick ideas when guideline.jobPickEnabled is true.",
-      parameters: z.object({}),
+      parameters: emptyArgsSchema,
       execute: async () => tools.getCandidateJobs()
     });
 
@@ -291,6 +303,32 @@ export class OpenAIIdeationAgent implements IdeationAgent {
       }
     });
 
+    const submit_ideas = tool({
+      name: "submit_ideas",
+      description:
+        "Submit the final ideation result. Call this ONCE after research tools. Must include exactly the requested number of ideas.",
+      parameters: submitIdeasSchema,
+      execute: async (payload) => {
+        const parsed = submitIdeasSchema.safeParse(payload);
+        if (!parsed.success) {
+          return {
+            ok: false,
+            error: parsed.error.message,
+            hint: "Provide summary (string), reasoning (string[]), ideas (array of objects with title, summary, pillar, topicKey, hook, angle, referenceIds[], jobId null|string, rationale, score null|number)."
+          };
+        }
+        if (parsed.data.ideas.length < 1) {
+          return { ok: false, error: "ideas must contain at least 1 item" };
+        }
+        submission.value = parsed.data;
+        return {
+          ok: true,
+          accepted: submission.value.ideas.length,
+          message: "Ideas accepted. Stop after this tool."
+        };
+      }
+    });
+
     const agent = new Agent({
       name: "Instagram Ideation Agent",
       model: "gpt-4.1",
@@ -302,51 +340,67 @@ Architecture rules:
 - Memory and previous posts are for dedupe — do not repeat topicKey/titles.
 - Content style is inspired-by わかる転職 genre (structure/hooks), never copy brand text or characters.
 - Prefer knowhow carousel ideas. Jobs are optional; ignore jobs unless guideline.jobPickEnabled and candidates exist.
-- Output exactly the requested number of ideas as structured JSON.
-- topicKey must be stable snake/dot ascii-ish keys (e.g. prep.before_quit.three_steps).
+- topicKey must be stable ascii keys with dots (e.g. prep.before_quit.three_steps). If unsure, derive from title.
 - Titles/summaries/hooks in Japanese unless guideline says otherwise.
 - Respect NG rules in the guideline.
+- jobId must be null when no job is attached. referenceIds may be [].
 
-Workflow:
+Required workflow:
 1) Call get_guideline, list_references, get_memory, get_previous_posts.
-2) Optionally get_candidate_jobs.
-3) Draft candidates; call check_duplicate for each topicKey/title and replace duplicates.
-4) Return final structured ideas.`,
+2) Optionally get_candidate_jobs / check_duplicate.
+3) Finish by calling submit_ideas exactly once with summary, reasoning[], and ideas[].
+4) Do not answer in free text — the submit_ideas tool is your final output.`,
       tools: [
         get_guideline,
         list_references,
         get_memory,
         get_previous_posts,
         get_candidate_jobs,
-        check_duplicate
+        check_duplicate,
+        submit_ideas
       ],
-      outputType: ideationOutputSchema
+      toolUseBehavior: { stopAtToolNames: ["submit_ideas"] }
     });
 
     const userMessage = [
       `accountId: ${accountId}`,
       `Generate exactly ${input.count} Instagram carousel ideas.`,
+      `Then call submit_ideas with exactly ${input.count} ideas.`,
       input.seedText ? `Operator seed text:\n${input.seedText}` : "No seed text.",
       input.seedUrl ? `Optional seed URL: ${input.seedUrl}` : "No seed URL."
     ].join("\n\n");
 
-    const result = await run(agent, userMessage, { maxTurns: 12 });
-    const output = ideationOutputSchema.parse(result.finalOutput);
+    try {
+      await run(agent, userMessage, { maxTurns: 16 });
+    } catch (error) {
+      // If the model still produced a tool payload we captured, prefer that over a hard fail.
+      if (!submission.value) {
+        const message = error instanceof Error ? error.message : "Ideation agent failed";
+        throw new Error(message);
+      }
+    }
 
-    const ideas: IdeationCandidate[] = output.ideas.slice(0, input.count).map((idea, index) => ({
+    const submitted = submission.value;
+    if (!submitted) {
+      throw new Error(
+        "Ideation agent finished without calling submit_ideas. Retry the request."
+      );
+    }
+
+    const ideas: IdeationCandidate[] = submitted.ideas.slice(0, input.count).map((idea, index) => ({
       accountId,
-      title: idea.title,
-      summary: idea.summary,
-      pillar: idea.pillar,
-      topicKey: idea.topicKey || normalizeTopicKey(idea.title),
-      hook: idea.hook,
-      angle: idea.angle,
-      referenceIds: idea.referenceIds,
-      jobId: idea.jobId,
+      title: idea.title.trim(),
+      summary: idea.summary.trim(),
+      pillar: idea.pillar.trim() || "転職準備",
+      topicKey: (idea.topicKey || "").trim() || normalizeTopicKey(idea.title),
+      hook: idea.hook ?? "",
+      angle: idea.angle ?? "",
+      referenceIds: idea.referenceIds ?? [],
+      jobId: idea.jobId ?? null,
       status: "queued" as const,
       agentRunId: null,
       score: idea.score ?? 1 - index * 0.05,
-      rationale: idea.rationale
+      rationale: idea.rationale?.trim() || "Generated by OpenAI Agents"
     }));
 
     if (ideas.length === 0) {
@@ -354,9 +408,9 @@ Workflow:
     }
 
     return {
-      summary: output.summary,
+      summary: submitted.summary,
       ideas,
-      reasoning: [...output.reasoning, "mode=openai-agents"]
+      reasoning: [...submitted.reasoning, "mode=openai-agents", "via=submit_ideas"]
     };
   }
 }
