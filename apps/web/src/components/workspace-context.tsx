@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import type { Guideline, Idea, MemoryItem, Post, PostAsset, Reference } from "@ama/shared";
+import { DEFAULT_AUTO_RUN_SCHEDULE, autoRunSettingsSchema, type Guideline, Idea, MemoryItem, Post, PostAsset, Reference } from "@ama/shared";
 import {
   approvePost as approvePostApi,
   createAccountApi,
@@ -24,6 +24,7 @@ import {
   listMemory,
   listReferences,
   patchIdea,
+  putAutoRun,
   putCanvaTemplate,
   putGuideline,
   regeneratePost,
@@ -115,6 +116,7 @@ function mapAccount(
     target: guideline?.target || fallback?.target || "",
     concept: guideline?.concept || fallback?.concept || "",
     schedule: fallback?.schedule ?? "毎日 18:00",
+    autoRunEnabled: fallback?.autoRunEnabled ?? false,
     systemPrompt: guideline?.systemPrompt || fallback?.systemPrompt || DEFAULT_PROMPT,
     memory: memory.map((m) => m.topicKey),
     ideaQueue: ideas.filter((i) => i.status === "queued").map((i) => i.title)
@@ -258,7 +260,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                   acc.id === (bundle.accounts[0]?.id ?? "") ? bundle.ideas : [],
                   INITIAL_ACCOUNTS.find((a) => a.id === acc.id)
                 ),
-                canvaTemplateId: acc.canvaTemplateId
+                canvaTemplateId: acc.canvaTemplateId,
+                schedule: acc.autoRunSchedule ?? DEFAULT_AUTO_RUN_SCHEDULE,
+                autoRunEnabled: acc.autoRunEnabled ?? false
               }))
             : INITIAL_ACCOUNTS;
 
@@ -562,6 +566,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           systemPrompt: merged?.systemPrompt ?? DEFAULT_PROMPT
         });
         setGuideline(item.item);
+        const settings = autoRunSettingsSchema.safeParse({
+          enabled: merged.autoRunEnabled ?? false,
+          schedule: merged.schedule
+        });
+        if (settings.success) await putAutoRun(accountId, settings.data);
       },
       addReference: async (accountId, title, examplesText) => {
         if (!apiReady) {

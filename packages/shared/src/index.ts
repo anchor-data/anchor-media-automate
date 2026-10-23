@@ -5,7 +5,12 @@ export const accountSchema = z.object({
   name: z.string(),
   instagramHandle: z.string(),
   canvaTemplateId: z.string(),
-  tone: z.string()
+  tone: z.string(),
+  /** Periodic ideation + content creation. Off unless an operator enables it. */
+  autoRunEnabled: z.boolean().optional(),
+  /** One of AUTO_RUN_SCHEDULES (JST). */
+  autoRunSchedule: z.string().optional(),
+  lastAutoRunAt: z.string().nullable().optional()
 });
 export type Account = z.infer<typeof accountSchema>;
 
@@ -265,3 +270,48 @@ export const slideDeckSchema = z.object({
   hashtags: z.array(z.string()).max(30)
 });
 export type SlideDeck = z.infer<typeof slideDeckSchema>;
+
+export const AUTO_RUN_SCHEDULES = ["毎日 18:00", "毎日 12:00", "平日 9:00", "週3回 (火・木・土)"] as const;
+export const DEFAULT_AUTO_RUN_SCHEDULE = AUTO_RUN_SCHEDULES[0];
+
+export const autoRunSettingsSchema = z.object({
+  enabled: z.boolean(),
+  schedule: z.enum(AUTO_RUN_SCHEDULES)
+});
+export type AutoRunSettings = z.infer<typeof autoRunSettingsSchema>;
+
+interface ScheduleSlot {
+  /** 0 = Sunday … 6 = Saturday, in JST. */
+  readonly days: readonly number[];
+  readonly hour: number;
+}
+
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6] as const;
+const SCHEDULE_SLOTS: Record<(typeof AUTO_RUN_SCHEDULES)[number], ScheduleSlot> = {
+  "毎日 18:00": { days: ALL_DAYS, hour: 18 },
+  "毎日 12:00": { days: ALL_DAYS, hour: 12 },
+  "平日 9:00": { days: [1, 2, 3, 4, 5], hour: 9 },
+  "週3回 (火・木・土)": { days: [2, 4, 6], hour: 18 }
+};
+
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/** Start of the JST hour containing `at`, as epoch ms. */
+function jstHourStart(at: Date): number {
+  return Math.floor((at.getTime() + JST_OFFSET_MS) / HOUR_MS) * HOUR_MS - JST_OFFSET_MS;
+}
+
+/**
+ * True when `now` falls in the JST hour the schedule targets and that hour has not run yet.
+ * The cron fires hourly, so matching on the hour (not the minute) tolerates delayed triggers.
+ */
+export function isAutoRunDue(schedule: string, now: Date, lastRunAt: string | null | undefined): boolean {
+  const slot = SCHEDULE_SLOTS[schedule as keyof typeof SCHEDULE_SLOTS];
+  if (!slot) return false;
+  const jst = new Date(now.getTime() + JST_OFFSET_MS);
+  if (!slot.days.includes(jst.getUTCDay()) || jst.getUTCHours() !== slot.hour) return false;
+  if (!lastRunAt) return true;
+  const last = new Date(lastRunAt);
+  return Number.isNaN(last.getTime()) || last.getTime() < jstHourStart(now);
+}

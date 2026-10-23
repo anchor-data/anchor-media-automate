@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { missingTemplateFields, type CanvaClient } from "@ama/integrations";
 import type { Account } from "@ama/shared";
+import { autoRunSettingsSchema } from "@ama/shared";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
 
@@ -53,5 +54,16 @@ accountRoutes.put("/accounts/:id/canva-template", async (c) => {
   const check = await checkTemplate(createCanva(c.env, repo), parsed.data.templateId);
   if (!check.ok) return c.json(check, 422);
   const item = await repo.updateAccountTemplate(account.id, parsed.data.templateId);
+  return c.json({ item, mode: repo.mode });
+});
+
+/** Enable/disable the periodic ideation + content run and pick its schedule. */
+accountRoutes.put("/accounts/:id/auto-run", async (c) => {
+  const parsed = autoRunSettingsSchema.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const repo = createRepo(c.env);
+  const item = await repo.updateAccountAutoRun(c.req.param("id"), parsed.data);
+  if (!item) return c.json({ error: "Account not found" }, 404);
   return c.json({ item, mode: repo.mode });
 });

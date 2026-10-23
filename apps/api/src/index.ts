@@ -5,6 +5,7 @@ import type { Repository } from "@ama/db";
 import { agentRunRequestSchema } from "@ama/shared";
 import { createAgentRunner, createInstagramClient } from "@ama/integrations";
 import { z } from "zod";
+import { runDueAutoRuns } from "./lib/auto-run";
 import { createCanva, createRepo, type Bindings } from "./lib/env";
 import { accountRoutes } from "./routes/accounts";
 import { canvaRoutes } from "./routes/canva";
@@ -221,4 +222,16 @@ async function regenerate_post(
 const root = new Hono<{ Bindings: Bindings }>();
 root.route("/api", app);
 
-export default root;
+export default {
+  fetch: root.fetch,
+  // Hourly cron (see wrangler.jsonc): generates ideas + content for accounts with auto run enabled.
+  async scheduled(controller: ScheduledController, env: Bindings, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      runDueAutoRuns(env, new Date(controller.scheduledTime)).then((results) => {
+        for (const r of results.filter((x) => !x.ok)) {
+          console.error(`auto-run failed for ${r.accountId}: ${r.error}`);
+        }
+      })
+    );
+  }
+};

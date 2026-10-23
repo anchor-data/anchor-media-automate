@@ -1,5 +1,6 @@
 import type {
   Account,
+  AutoRunSettings,
   Guideline,
   GuidelineUpsert,
   Idea,
@@ -168,6 +169,13 @@ export async function putCanvaTemplate(accountId: string, templateId: string) {
   return request<{ item: Account }>(`/accounts/${accountId}/canva-template`, {
     method: "PUT",
     body: JSON.stringify({ templateId })
+  });
+}
+
+export async function putAutoRun(accountId: string, body: AutoRunSettings) {
+  return request<{ item: Account }>(`/accounts/${accountId}/auto-run`, {
+    method: "PUT",
+    body: JSON.stringify(body)
   });
 }
 

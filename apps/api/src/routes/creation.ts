@@ -28,7 +28,7 @@ function errorMessage(error: unknown): string {
 }
 
 /** Run the creation agent, store the deck, then render it. Never throws: failures land on the post. */
-async function generatePost(
+export async function generatePost(
   env: Bindings,
   postId: string,
   input: CreationRunInput,
