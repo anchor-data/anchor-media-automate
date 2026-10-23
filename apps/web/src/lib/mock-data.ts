@@ -1,4 +1,4 @@
-import type { GenerationStatus } from "@ama/shared";
+import { AUTO_RUN_SCHEDULES, type GenerationStatus } from "@ama/shared";
 
 export type PostStatus = "draft" | "scheduled" | "published";
 
@@ -28,6 +28,8 @@ export interface MockAccount {
   readonly target: string;
   readonly concept: string;
   readonly schedule: string;
+  /** Periodic idea + content generation at `schedule` (API accounts only). */
+  readonly autoRunEnabled?: boolean;
   readonly systemPrompt: string;
   readonly memory: readonly string[];
   readonly ideaQueue: readonly string[];
@@ -48,7 +50,7 @@ export const STATUS_LABEL: Record<PostStatus, string> = {
 };
 
 export const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"] as const;
-export const SCHEDULE_OPTIONS = ["毎日 18:00", "毎日 12:00", "平日 9:00", "週3回 (火・木・土)"] as const;
+export const SCHEDULE_OPTIONS = AUTO_RUN_SCHEDULES;
 export const DEFAULT_PROMPT =
   "あなたはプロのSNSマーケターです。提供される自社データやテーマに基づき、Demindのテンプレートに従って魅力的なInstagramのカルーセル投稿を企画してください。";
 

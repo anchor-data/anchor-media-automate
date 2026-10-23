@@ -4,10 +4,14 @@ CREATE TABLE IF NOT EXISTS accounts (
   instagram_handle TEXT NOT NULL,
   canva_template_id TEXT NOT NULL,
   tone TEXT NOT NULL,
+  auto_run_enabled INTEGER NOT NULL DEFAULT 0,
+  auto_run_schedule TEXT NOT NULL DEFAULT '毎日 18:00',
+  last_auto_run_at TEXT,
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
+-- Existing databases: setup.ts adds these columns when missing.
 CREATE TABLE IF NOT EXISTS jobs (
   id TEXT PRIMARY KEY,
   company TEXT NOT NULL,

@@ -28,6 +28,7 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
   const [target, setTarget] = useState(account?.target ?? "");
   const [concept, setConcept] = useState(account?.concept ?? "");
   const [schedule, setSchedule] = useState(account?.schedule ?? SCHEDULE_OPTIONS[0]);
+  const [autoRun, setAutoRun] = useState(account?.autoRunEnabled ?? false);
   const [prompt, setPrompt] = useState(account?.systemPrompt ?? "");
   const [refTitle, setRefTitle] = useState("");
   const [refBody, setRefBody] = useState("");
@@ -60,6 +61,7 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
                 target: target.trim(),
                 concept: concept.trim(),
                 schedule,
+                autoRunEnabled: autoRun,
                 systemPrompt: prompt
               })
                 .then(() => {
@@ -187,11 +189,24 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
         </div>
         <div className="stack gap-16">
           <div className="tile">
-            <span className="label">投稿生成スケジュール</span>
+            <span className="label">定期実行（アイデア＋コンテンツ自動生成）</span>
+            <label className="row gap-8">
+              <input
+                type="checkbox"
+                role="switch"
+                aria-label="定期実行を有効にする"
+                checked={autoRun}
+                disabled={!apiReady}
+                onChange={(e) => setAutoRun(e.target.checked)}
+              />
+              <span>{autoRun ? "有効" : "無効"}</span>
+            </label>
+            {!apiReady ? <span className="muted small">API未接続のため定期実行は利用できません</span> : null}
             <select
               className="select"
               aria-label="投稿生成スケジュール"
               value={schedule}
+              disabled={!autoRun}
               onChange={(e) => setSchedule(e.target.value)}
             >
               {SCHEDULE_OPTIONS.map((option) => (

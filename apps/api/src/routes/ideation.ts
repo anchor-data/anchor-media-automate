@@ -1,12 +1,12 @@
 import { Hono } from "hono";
-import { createRepository } from "@ama/db";
+import { createRepository, type Repository } from "@ama/db";
 import {
   createIdeationAgent,
   usedTopicKeys,
   withoutDuplicateIdeas,
   type IdeationToolContext
 } from "@ama/integrations";
-import type { AgentRun } from "@ama/shared";
+import type { AgentRun, IdeationRunRequest } from "@ama/shared";
 import {
   guidelineUpsertSchema,
   ideationRunRequestSchema,
@@ -25,6 +25,46 @@ function createRepo(env: Bindings) {
     tursoUrl: env.TURSO_DATABASE_URL,
     tursoAuthToken: env.TURSO_AUTH_TOKEN
   });
+}
+
+/** Run the ideation agent, drop duplicate topics and store the rest as queued ideas. Throws on failure. */
+export async function runIdeation(repo: Repository, openAiApiKey: string | undefined, input: IdeationRunRequest) {
+  const agent = createIdeationAgent({ openAiApiKey });
+  const tools: IdeationToolContext = {
+    getGuideline: (accountId) => repo.getActiveGuideline(accountId),
+    listReferences: (accountId) => repo.listReferences(accountId),
+    getMemory: (accountId) => repo.listMemory(accountId),
+    getPreviousPosts: (accountId, limit) => repo.listPostsByAccount(accountId, limit),
+    getCandidateJobs: () => repo.listJobs(),
+    listQueuedIdeas: (accountId) => repo.listIdeas(accountId)
+  };
+
+  const output = await agent.run(input, tools);
+  const [memory, posts, existingIdeas] = await Promise.all([
+    repo.listMemory(input.accountId),
+    repo.listPostsByAccount(input.accountId, 50),
+    repo.listIdeas(input.accountId)
+  ]);
+  const { kept, skipped } = withoutDuplicateIdeas(output.ideas, usedTopicKeys(memory, posts, existingIdeas));
+  if (kept.length === 0) {
+    throw new Error("No new ideas could be generated (all candidates duplicate existing topics)");
+  }
+  const ideas = await repo.createIdeas(kept);
+  const reasoning =
+    skipped.length > 0
+      ? [...output.reasoning, `Stored only new ideas. Dropped duplicates: ${skipped.join(" / ")}`]
+      : output.reasoning;
+  const run: AgentRun = {
+    id: `run_${crypto.randomUUID()}`,
+    accountId: input.accountId,
+    createdPostId: null,
+    kind: "ideation",
+    summary: output.summary,
+    outputJson: { reasoning, ideaIds: ideas.map((i) => i.id) }
+  };
+  await repo.createAgentRun(run);
+
+  return { mode: agent.mode, summary: output.summary, items: ideas, reasoning, agentRunId: run.id };
 }
 
 export const ideationRoutes = new Hono<{ Bindings: Bindings }>();
@@ -164,54 +204,9 @@ ideationRoutes.post("/ideation/run", async (c) => {
   const account = await repo.getAccount(parsed.data.accountId);
   if (!account) return c.json({ error: "Account not found" }, 404);
 
-  const agent = createIdeationAgent({
-    openAiApiKey: c.env.OPENAI_API_KEY
-  });
-
-  const tools: IdeationToolContext = {
-    getGuideline: (accountId) => repo.getActiveGuideline(accountId),
-    listReferences: (accountId) => repo.listReferences(accountId),
-    getMemory: (accountId) => repo.listMemory(accountId),
-    getPreviousPosts: (accountId, limit) => repo.listPostsByAccount(accountId, limit),
-    getCandidateJobs: () => repo.listJobs(),
-    listQueuedIdeas: (accountId) => repo.listIdeas(accountId)
-  };
-
   try {
-    const output = await agent.run(parsed.data, tools);
-    const [memory, posts, existingIdeas] = await Promise.all([
-      repo.listMemory(parsed.data.accountId),
-      repo.listPostsByAccount(parsed.data.accountId, 50),
-      repo.listIdeas(parsed.data.accountId)
-    ]);
-    const { kept, skipped } = withoutDuplicateIdeas(
-      output.ideas,
-      usedTopicKeys(memory, posts, existingIdeas)
-    );
-    if (kept.length === 0) {
-      throw new Error("No new ideas could be generated (all candidates duplicate existing topics)");
-    }
-    const ideas = await repo.createIdeas(kept);
-    if (skipped.length > 0) {
-      output.reasoning.push(`Stored only new ideas. Dropped duplicates: ${skipped.join(" / ")}`);
-    }
-    const run: AgentRun = {
-      id: `run_${crypto.randomUUID()}`,
-      accountId: parsed.data.accountId,
-      createdPostId: null,
-      kind: "ideation",
-      summary: output.summary,
-      outputJson: { reasoning: output.reasoning, ideaIds: ideas.map((i) => i.id) }
-    };
-    await repo.createAgentRun(run);
-
-    return c.json({
-      mode: agent.mode,
-      summary: output.summary,
-      items: ideas,
-      reasoning: output.reasoning,
-      agentRunId: run.id
-    });
+    const result = await runIdeation(repo, c.env.OPENAI_API_KEY, parsed.data);
+    return c.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Ideation failed";
     return c.json({ error: message }, 500);

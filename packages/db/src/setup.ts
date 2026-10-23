@@ -7,6 +7,12 @@ import { loadRootEnv } from "./load-env";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+const ACCOUNT_COLUMN_MIGRATIONS = [
+  "auto_run_enabled INTEGER NOT NULL DEFAULT 0",
+  "auto_run_schedule TEXT NOT NULL DEFAULT '毎日 18:00'",
+  "last_auto_run_at TEXT"
+] as const;
+
 async function main() {
   await loadRootEnv();
   const url = process.env.TURSO_DATABASE_URL;
@@ -33,6 +39,15 @@ async function main() {
 
   for (const statement of statements) {
     await client.execute(`${statement};`);
+  }
+
+  // CREATE TABLE IF NOT EXISTS never alters an existing table, so add newer columns by hand.
+  for (const column of ACCOUNT_COLUMN_MIGRATIONS) {
+    try {
+      await client.execute(`ALTER TABLE accounts ADD COLUMN ${column}`);
+    } catch (error) {
+      if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error;
+    }
   }
 
   console.log(`Schema applied to Turso (${statements.length} statements)`);

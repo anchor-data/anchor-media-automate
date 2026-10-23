@@ -2,6 +2,7 @@ import { createClient, type Client } from "@libsql/client";
 import type {
   Account,
   AgentRun,
+  AutoRunSettings,
   Guideline,
   GuidelineUpsert,
   Idea,
@@ -16,6 +17,7 @@ import type {
   ReferenceCreate,
   ReferenceKind
 } from "@ama/shared";
+import { DEFAULT_AUTO_RUN_SCHEDULE } from "@ama/shared";
 import { createPhase1Seed } from "./seed";
 
 export type DraftInput = {
@@ -40,6 +42,8 @@ export interface Repository {
   listAccounts(): Promise<Account[]>;
   createAccount(account: Account): Promise<Account>;
   updateAccountTemplate(accountId: string, canvaTemplateId: string): Promise<Account | null>;
+  updateAccountAutoRun(accountId: string, settings: AutoRunSettings): Promise<Account | null>;
+  markAutoRun(accountId: string, at: string): Promise<void>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
     postId: string,
@@ -157,6 +161,20 @@ class MockRepository implements Repository {
     const updated = { ...this.accounts[index]!, canvaTemplateId };
     this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
     return updated;
+  }
+  async updateAccountAutoRun(accountId: string, settings: AutoRunSettings) {
+    const index = this.accounts.findIndex((a) => a.id === accountId);
+    if (index < 0) return null;
+    const updated = {
+      ...this.accounts[index]!,
+      autoRunEnabled: settings.enabled,
+      autoRunSchedule: settings.schedule
+    };
+    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
+    return updated;
+  }
+  async markAutoRun(accountId: string, at: string) {
+    this.accounts = this.accounts.map((a) => (a.id === accountId ? { ...a, lastAutoRunAt: at } : a));
   }
   async createAccount(account: Account) {
     if (this.accounts.some((a) => a.id === account.id)) {
@@ -468,7 +486,7 @@ class TursoRepository implements Repository {
 
   async getAccount(accountId: string) {
     const result = await this.client.execute({
-      sql: "SELECT id, name, instagram_handle, canva_template_id, tone FROM accounts WHERE id = ?",
+      sql: "SELECT * FROM accounts WHERE id = ?",
       args: [accountId]
     });
     const row = result.rows[0];
@@ -478,7 +496,7 @@ class TursoRepository implements Repository {
 
   async listAccounts() {
     const result = await this.client.execute(
-      "SELECT id, name, instagram_handle, canva_template_id, tone FROM accounts ORDER BY created_at DESC"
+      "SELECT * FROM accounts ORDER BY created_at DESC"
     );
     return result.rows.map(mapAccountRow);
   }
@@ -489,6 +507,21 @@ class TursoRepository implements Repository {
       args: [canvaTemplateId, nowIso(), accountId]
     });
     return this.getAccount(accountId);
+  }
+
+  async updateAccountAutoRun(accountId: string, settings: AutoRunSettings) {
+    await this.client.execute({
+      sql: "UPDATE accounts SET auto_run_enabled = ?, auto_run_schedule = ?, updated_at = ? WHERE id = ?",
+      args: [settings.enabled ? 1 : 0, settings.schedule, nowIso(), accountId]
+    });
+    return this.getAccount(accountId);
+  }
+
+  async markAutoRun(accountId: string, at: string) {
+    await this.client.execute({
+      sql: "UPDATE accounts SET last_auto_run_at = ? WHERE id = ?",
+      args: [at, accountId]
+    });
   }
 
   async createAccount(account: Account) {
@@ -1065,7 +1098,10 @@ function mapAccountRow(row: Record<string, unknown>): Account {
     name: String(row.name),
     instagramHandle: String(row.instagram_handle),
     canvaTemplateId: String(row.canva_template_id),
-    tone: String(row.tone)
+    tone: String(row.tone),
+    autoRunEnabled: sqliteBool(row.auto_run_enabled),
+    autoRunSchedule: row.auto_run_schedule ? String(row.auto_run_schedule) : DEFAULT_AUTO_RUN_SCHEDULE,
+    lastAutoRunAt: row.last_auto_run_at == null ? null : String(row.last_auto_run_at)
   };
 }
 
