@@ -4,7 +4,7 @@ import { generatePost } from "../routes/creation";
 import { runIdeation } from "../routes/ideation";
 import { createRepo, type Bindings } from "./env";
 
-const IDEAS_PER_RUN = 3;
+const IDEAS_PER_RUN = 1;
 
 export interface AutoRunResult {
   readonly accountId: string;
