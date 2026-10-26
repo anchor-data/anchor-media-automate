@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Icon } from "../icon";
+import { SlideCarousel } from "../slide-carousel";
 import { useWorkspace } from "../workspace-context";
 import { STATUS_LABEL } from "../../lib/mock-data";
 import { Modal } from "./modal";
@@ -52,9 +53,16 @@ export function PostEditModal({ postId }: { postId: string }) {
         <div className="stack gap-16">
           <div className="stack gap-8">
             <span className="label">メディアプレビュー</span>
-            <div className="image-box" style={{ height: 220 }}>
-              <Icon name="image" size={32} />
-            </div>
+            {post.assetUrls && post.assetUrls.length > 0 ? (
+              <SlideCarousel urls={post.assetUrls} />
+            ) : (
+              <div className="image-box" style={{ height: 220 }}>
+                <Icon name="image" size={32} />
+                <span className="small muted">
+                  {post.generationStatus && post.generationStatus !== "ready" ? "画像を生成中…" : "画像を読み込み中…"}
+                </span>
+              </div>
+            )}
           </div>
           <div className="stack gap-8">
             <label className="label" htmlFor="edit-caption">

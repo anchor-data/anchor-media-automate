@@ -10,7 +10,12 @@ const __dirname = dirname(__filename);
 const ACCOUNT_COLUMN_MIGRATIONS = [
   "auto_run_enabled INTEGER NOT NULL DEFAULT 0",
   "auto_run_schedule TEXT NOT NULL DEFAULT '毎日 18:00'",
-  "last_auto_run_at TEXT"
+  "last_auto_run_at TEXT",
+  "image_style_prompt TEXT NOT NULL DEFAULT ''"
+] as const;
+
+const IMAGE_ASSET_COLUMN_MIGRATIONS = [
+  "kind TEXT NOT NULL DEFAULT 'asset' CHECK (kind IN ('asset', 'reference', 'generated'))"
 ] as const;
 
 async function main() {
@@ -45,6 +50,14 @@ async function main() {
   for (const column of ACCOUNT_COLUMN_MIGRATIONS) {
     try {
       await client.execute(`ALTER TABLE accounts ADD COLUMN ${column}`);
+    } catch (error) {
+      if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error;
+    }
+  }
+
+  for (const column of IMAGE_ASSET_COLUMN_MIGRATIONS) {
+    try {
+      await client.execute(`ALTER TABLE image_assets ADD COLUMN ${column}`);
     } catch (error) {
       if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error;
     }

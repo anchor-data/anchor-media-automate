@@ -9,6 +9,7 @@ const asset = (id: string, canvaAssetId: string | null = null): ImageAsset => ({
   label: id,
   description: "",
   contentType: "image/png",
+  kind: "asset",
   sizeBytes: 1,
   canvaAssetId,
   createdAt: "2026-01-01"

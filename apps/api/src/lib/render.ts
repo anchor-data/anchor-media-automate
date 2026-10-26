@@ -19,7 +19,7 @@ async function loadSlideImages(
   if (!bucket) throw new Error("Post uses images but image storage (R2 IMAGE_ASSETS) is not configured");
   return resolveSlideImages({
     images,
-    assets: await repo.listImageAssets(post.accountId),
+    assets: await repo.listImageAssets(post.accountId, ["asset", "reference", "generated"]),
     templateFields: await canva.getTemplateFieldNames(templateId),
     upload: async (asset) => {
       const object = await bucket.get(imageAssetKey(asset.id));

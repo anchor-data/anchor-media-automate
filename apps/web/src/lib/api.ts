@@ -280,9 +280,16 @@ export async function listImageAssets(accountId: string) {
   return request<{ items: ImageAsset[]; mode: string }>(`/accounts/${accountId}/image-assets`);
 }
 
-export async function uploadImageAsset(accountId: string, file: File, label: string, description: string) {
+export async function uploadImageAsset(
+  accountId: string,
+  file: File,
+  label: string,
+  description: string,
+  kind: "asset" | "reference"
+) {
   const body = new FormData();
   body.append("file", file);
+  body.append("kind", kind);
   body.append("label", label);
   body.append("description", description);
   return request<{ item: ImageAsset; mode: string }>(`/accounts/${accountId}/image-assets`, {
@@ -296,3 +303,18 @@ export async function deleteImageAsset(assetId: string) {
 }
 
 export const imageAssetFileUrl = (assetId: string) => `${API_BASE_URL}/image-assets/${assetId}/file`;
+
+export async function listImageSlots(accountId: string) {
+  return request<{ slots: string[] }>(`/accounts/${accountId}/image-slots`);
+}
+
+export async function getImageStyle(accountId: string) {
+  return request<{ prompt: string }>(`/accounts/${accountId}/image-style`);
+}
+
+export async function saveImageStyle(accountId: string, prompt: string) {
+  return request<{ prompt: string }>(`/accounts/${accountId}/image-style`, {
+    method: "PUT",
+    body: JSON.stringify({ prompt })
+  });
+}

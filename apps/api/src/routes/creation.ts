@@ -10,6 +10,7 @@ import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
 import { slideFieldsSchema, slideImagesFrom } from "@ama/shared";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
+import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
 import { renderPost } from "../lib/render";
 
 export const creationRoutes = new Hono<{ Bindings: Bindings }>();
@@ -20,7 +21,9 @@ function toolContext(repo: Repository): CreationToolContext {
     getGuideline: (accountId) => repo.getActiveGuideline(accountId),
     listReferences: (accountId) => repo.listReferences(accountId),
     getJob: async (jobId) => (await repo.listJobs()).find((job) => job.id === jobId) ?? null,
-    listImageAssets: (accountId) => repo.listImageAssets(accountId)
+    // Only "asset" images are offered for placement; "reference" sheets feed AI generation instead.
+    listImageAssets: (accountId) => repo.listImageAssets(accountId, ["asset"]),
+    getImageStylePrompt: async (accountId) => (await repo.getAccount(accountId))?.imageStylePrompt ?? ""
   };
 }
 
@@ -39,10 +42,17 @@ export async function generatePost(
   try {
     await repo.updatePost(postId, { generationStatus: "generating_copy", generationError: null });
     const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(input, toolContext(repo));
+    const previousImages = slideImagesFrom((await repo.getPost(postId))?.post.slidesJson);
+    const { images, warnings } = await generateDeckImages(
+      repo,
+      { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
+      input.accountId,
+      output.deck
+    );
     const post = await repo.updatePost(postId, {
       caption: output.deck.caption,
       hashtags: output.deck.hashtags,
-      slidesJson: { ...output.deck.slides, images: output.deck.images ?? [] },
+      slidesJson: { ...output.deck.slides, images },
       postType: output.deck.postType
     });
     const run: AgentRun = {
@@ -51,9 +61,10 @@ export async function generatePost(
       createdPostId: postId,
       kind,
       summary: output.summary,
-      outputJson: { reasoning: output.reasoning, ideaId: input.ideaId }
+      outputJson: { reasoning: [...output.reasoning, ...warnings], ideaId: input.ideaId }
     };
     await repo.createAgentRun(run);
+    await discardGeneratedImages(repo, env.IMAGE_ASSETS, previousImages);
     if (post) await renderPost(repo, createCanva(env, repo), post, { imageBucket: env.IMAGE_ASSETS });
   } catch (error) {
     // renderPost already marks its own failures; this covers agent failures.
@@ -122,7 +133,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
       const check = validateDeck(deck, {
         idea,
         guideline,
-        imageAssets: await repo.listImageAssets(idea.accountId)
+        imageAssets: await repo.listImageAssets(idea.accountId, ["asset", "reference", "generated"])
       });
       if (!check.ok) return c.json({ error: check.errors }, 422);
     }

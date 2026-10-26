@@ -12,6 +12,8 @@ export type CreationToolContext = {
   getJob: (jobId: string) => Promise<Job | null>;
   /** Human-uploaded images the agent may place into slides. Omitted: no image tool. */
   listImageAssets?: (accountId: string) => Promise<ImageAsset[]>;
+  /** The account's fixed image rules (subject, style, palette...); AI image generation is on only when it is non-empty. */
+  getImageStylePrompt?: (accountId: string) => Promise<string>;
 };
 
 export type CreationRunInput = {
@@ -34,7 +36,13 @@ export interface CreationAgent {
 }
 
 /** Context a deck is validated against. */
-export type DeckContext = { idea: Idea; guideline: Guideline; imageAssets?: readonly ImageAsset[] };
+export type DeckContext = {
+  idea: Idea;
+  guideline: Guideline;
+  imageAssets?: readonly ImageAsset[];
+  /** True when the account has a style prompt, so imagePrompts may be used. */
+  imageGeneration?: boolean;
+};
 
 export type DeckValidation =
   | { ok: true; deck: SlideDeck }
@@ -83,6 +91,13 @@ export function validateDeck(raw: unknown, context: DeckContext): DeckValidation
     if (!known.has(image.assetId)) errors.push(`Unknown image asset: ${image.assetId} (use ids from list_image_assets)`);
     if (usedSlots.has(image.slot)) errors.push(`Image slot used twice: ${image.slot}`);
     usedSlots.add(image.slot);
+  }
+  if ((deck.imagePrompts ?? []).length > 0 && !context.imageGeneration) {
+    errors.push("imagePrompts: AI image generation is not enabled for this account (no image style prompt); pass []");
+  }
+  for (const prompt of deck.imagePrompts ?? []) {
+    if (usedSlots.has(prompt.slot)) errors.push(`Image slot used twice: ${prompt.slot}`);
+    usedSlots.add(prompt.slot);
   }
   for (const rule of findNgPhraseViolations(deck, context.guideline.ngRules)) {
     errors.push(`Deck contains an NG phrase: ${rule}`);
@@ -170,7 +185,9 @@ const submitDeckSchema = z.object({
   caption: z.string(),
   hashtags: z.array(z.string()),
   /** Images from list_image_assets placed into slides; empty when none fit. */
-  images: z.array(z.object({ slot: z.string(), assetId: z.string() }))
+  images: z.array(z.object({ slot: z.string(), assetId: z.string() })),
+  /** Scene-only prompts for AI-generated slide illustrations; [] when generation is not offered. */
+  imagePrompts: z.array(z.object({ slot: z.string(), scene: z.string() }))
 });
 
 const getIdeaArgsSchema = z.object({ confirm: z.boolean().nullable() });
@@ -191,6 +208,7 @@ export class OpenAICreationAgent implements CreationAgent {
     if (!guideline) throw new Error(`No active guideline for account ${idea.accountId}`);
 
     const imageAssets = (await tools.listImageAssets?.(idea.accountId)) ?? [];
+    const imageGeneration = Boolean((await tools.getImageStylePrompt?.(idea.accountId))?.trim());
 
     const state: { accepted: CreationRunOutput | null; rejections: number; lastErrors: string[] } = {
       accepted: null,
@@ -243,9 +261,10 @@ export class OpenAICreationAgent implements CreationAgent {
             slides: payload.slides,
             caption: payload.caption,
             hashtags: payload.hashtags,
-            images: payload.images
+            images: payload.images,
+            imagePrompts: payload.imagePrompts
           },
-          { idea, guideline, imageAssets }
+          { idea, guideline, imageAssets, imageGeneration }
         );
         if (!result.ok) {
           state.rejections += 1;
@@ -274,7 +293,12 @@ ${describeSlideLimits()}
 
 Required workflow:
 1) get_idea, get_guideline, list_references, list_image_assets (and get_job for job_pick).
-2) Call submit_deck. Put an uploaded image into submit_deck.images ({slot: "s1_image".."s8_image", assetId}) only when its label/description clearly fits that slide; use each slot at most once, and pass [] when nothing fits. Never invent asset ids.
+2) Call submit_deck. Decide per post whether an uploaded image helps. Place one in submit_deck.images ({slot: "s1_image".."s8_image", assetId}) only when this idea's slide would be clearer or more on-brand with it, following the image description (e.g. a mascot that "explains" suits explanation slides, a logo suits slide 1 or 8). Skip images that add nothing for this idea and pass [] when none are needed. Use each slot at most once; the same asset may appear on several slides. Never invent asset ids.${
+        imageGeneration
+          ? `
+   AI illustrations are available: the account has fixed image rules (subject, style, palette, background), applied automatically. For slides where a custom illustration helps (typically the explanation slides 2-6, at most 5), add submit_deck.imagePrompts entries {slot: "s2_image".."s8_image", scene}. Write ONLY what changes for that slide, in English: the subject's action or arrangement, setting, mood, lighting, composition (e.g. \"a person stands in a dark kitchen at night peeking into an open refrigerator, soft blue-white glow\" or \"overhead desk with a notebook and coffee, warm morning light\"). Do not repeat the fixed rules (who/what the subject looks like, art style, colors), and never ask for text in the image. Each scene must match that slide's message. Use a slot for either an uploaded image or a generated one, not both. Pass [] when illustrations add nothing.`
+          : ""
+      }
 3) If submit_deck returns ok:false, fix exactly the listed errors and call it again.
 4) Do not answer in free text — submit_deck is your final output.`,
       tools: [get_idea, get_guideline, list_references, list_image_assets, get_job, submit_deck],

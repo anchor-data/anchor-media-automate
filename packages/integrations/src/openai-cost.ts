@@ -122,3 +122,63 @@ export function logOpenAiRunCost(label: string, model: unknown, outcome: unknown
     `[openai] ${label} ${estimate.model} ${price} input=${estimate.inputTokens} cached=${estimate.cachedInputTokens} output=${estimate.outputTokens} requests=${estimate.requests}`
   );
 }
+
+/**
+ * USD per 1M tokens for the image models. gpt-image-1: text input $5, image input $10, image output $40.
+ * https://developers.openai.com/api/docs/pricing
+ */
+const IMAGE_MODEL_RATES = [{ id: "gpt-image-1", textInput: 5, imageInput: 10, output: 40 }] as const;
+
+/** Token usage as OpenAI's images endpoints report it. */
+export type OpenAiImageUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  input_tokens_details?: { text_tokens?: number; image_tokens?: number };
+};
+
+export type OpenAiImageCostEstimate = {
+  model: string;
+  usd: number | null;
+  textInputTokens: number;
+  imageInputTokens: number;
+  outputTokens: number;
+};
+
+export function estimateOpenAiImageCost(model: unknown, usage: OpenAiImageUsage | undefined): OpenAiImageCostEstimate | null {
+  if (!usage) return null;
+  const resolved = resolveModel(model);
+  const input = Math.max(usage.input_tokens ?? 0, 0);
+  const imageInput = Math.min(Math.max(usage.input_tokens_details?.image_tokens ?? 0, 0), input);
+  const textInput = usage.input_tokens_details?.text_tokens ?? input - imageInput;
+  const output = Math.max(usage.output_tokens ?? 0, 0);
+  const rates = IMAGE_MODEL_RATES.find((rate) => resolved === rate.id || resolved.startsWith(`${rate.id}-`));
+  const usd = rates
+    ? (textInput * rates.textInput + imageInput * rates.imageInput + output * rates.output) / 1_000_000
+    : null;
+  return { model: resolved, usd, textInputTokens: textInput, imageInputTokens: imageInput, outputTokens: output };
+}
+
+/** Dev-only cost line for one generated image. Silent in production and tests. */
+export function logOpenAiImageCost(label: string, model: unknown, usage: OpenAiImageUsage | undefined): void {
+  if (!isDevelopment()) return;
+  const estimate = estimateOpenAiImageCost(model, usage);
+  if (!estimate) {
+    console.log(`[openai] ${label} ${resolveModel(model)} price unavailable (no usage reported)`);
+    return;
+  }
+  const price = estimate.usd === null ? "price=unknown" : `$${estimate.usd.toFixed(6)}`;
+  console.log(
+    `[openai] ${label} ${estimate.model} ${price} text_in=${estimate.textInputTokens} image_in=${estimate.imageInputTokens} output=${estimate.outputTokens}`
+  );
+}
+
+/** Dev-only total for all images generated for one post. */
+export function logOpenAiImageBatchCost(label: string, costs: ReadonlyArray<number | null>): void {
+  if (!isDevelopment()) return;
+  const known = costs.filter((cost): cost is number => cost !== null);
+  const total = known.reduce((sum, cost) => sum + cost, 0);
+  const unknown = costs.length - known.length;
+  console.log(
+    `[openai] ${label} total $${total.toFixed(6)} for ${costs.length} image(s)${unknown > 0 ? ` (${unknown} without usage)` : ""}`
+  );
+}

@@ -20,6 +20,14 @@ export {
   type IdeationToolContext
 } from "./ideation";
 import { NotConfiguredError } from "./errors";
+export { estimateOpenAiImageCost, logOpenAiImageBatchCost, logOpenAiImageCost } from "./openai-cost";
+export {
+  composeImagePrompt,
+  generateSlideImage,
+  type GenerateSlideImageInput,
+  type GeneratedImage,
+  type ReferenceImage
+} from "./image-generation";
 export { extractReferencePatterns, type ExtractReferenceInput } from "./reference-extract";
 export { resolveSlideImages, validateImageUpload, type ImageUploadCheck } from "./slide-images";
 export {

@@ -89,3 +89,45 @@ describe("logOpenAiRunCost", () => {
     );
   });
 });
+
+describe("estimateOpenAiImageCost", () => {
+  it("prices gpt-image-1 text input, image input and image output tokens", async () => {
+    const { estimateOpenAiImageCost } = await import("../openai-cost");
+    const estimate = estimateOpenAiImageCost("gpt-image-1", {
+      input_tokens: 1_500,
+      input_tokens_details: { text_tokens: 500, image_tokens: 1_000 },
+      output_tokens: 1_056
+    });
+    expect(estimate?.usd).toBeCloseTo((500 * 5 + 1_000 * 10 + 1_056 * 40) / 1_000_000, 10);
+    expect(estimate).toMatchObject({ textInputTokens: 500, imageInputTokens: 1_000, outputTokens: 1_056 });
+  });
+
+  it("treats all input as text when no breakdown is given, and returns null price for unknown models", async () => {
+    const { estimateOpenAiImageCost } = await import("../openai-cost");
+    expect(estimateOpenAiImageCost("gpt-image-1", { input_tokens: 1_000, output_tokens: 0 })?.usd).toBeCloseTo(0.005, 10);
+    expect(estimateOpenAiImageCost("some-new-model", { input_tokens: 1, output_tokens: 1 })?.usd).toBeNull();
+  });
+
+  it("returns null when the response has no usage", async () => {
+    const { estimateOpenAiImageCost } = await import("../openai-cost");
+    expect(estimateOpenAiImageCost("gpt-image-1", undefined)).toBeNull();
+  });
+});
+
+describe("logOpenAiImageCost", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("logs a priced line in development and stays silent otherwise", async () => {
+    const { logOpenAiImageCost } = await import("../openai-cost");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const usage = { input_tokens: 100, output_tokens: 1_056 };
+    logOpenAiImageCost("image s2_image", "gpt-image-1", usage);
+    expect(log).not.toHaveBeenCalled();
+    vi.stubEnv("NODE_ENV", "development");
+    logOpenAiImageCost("image s2_image", "gpt-image-1", usage);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("[openai] image s2_image gpt-image-1 $"));
+  });
+});

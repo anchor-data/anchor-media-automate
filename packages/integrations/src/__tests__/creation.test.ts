@@ -131,6 +131,7 @@ describe("validateDeck images", () => {
     label: "オフィス",
     description: "",
     contentType: "image/png" as const,
+    kind: "asset" as const,
     sizeBytes: 10,
     canvaAssetId: null,
     createdAt: "2026-01-01"
@@ -173,5 +174,59 @@ describe("validateDeck images", () => {
       { idea, guideline, imageAssets: [asset] }
     );
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("validateDeck imagePrompts", () => {
+  const base = { postType: "knowhow", slides: validSlides(), caption: "c", hashtags: [] };
+
+  it("accepts scene prompts when image generation is enabled", () => {
+    const result = validateDeck(
+      { ...base, imagePrompts: [{ slot: "s2_image", scene: "夜のキッチンで冷蔵庫をのぞく" }] },
+      { idea, guideline, imageGeneration: true }
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects scene prompts when image generation is not set up", () => {
+    const result = validateDeck(
+      { ...base, imagePrompts: [{ slot: "s2_image", scene: "x" }] },
+      { idea, guideline }
+    );
+    expect(result).toEqual({ ok: false, errors: [expect.stringContaining("not enabled")] });
+  });
+
+  it("rejects a slot that is both placed and generated, or generated twice", () => {
+    const asset = {
+      id: "img_1",
+      accountId: "acc_1",
+      label: "l",
+      description: "",
+      contentType: "image/png" as const,
+      kind: "asset" as const,
+      sizeBytes: 1,
+      canvaAssetId: null,
+      createdAt: "2026-01-01"
+    };
+    const both = validateDeck(
+      {
+        ...base,
+        images: [{ slot: "s2_image", assetId: "img_1" }],
+        imagePrompts: [{ slot: "s2_image", scene: "x" }]
+      },
+      { idea, guideline, imageAssets: [asset], imageGeneration: true }
+    );
+    expect(both.ok).toBe(false);
+    const twice = validateDeck(
+      {
+        ...base,
+        imagePrompts: [
+          { slot: "s3_image", scene: "a" },
+          { slot: "s3_image", scene: "b" }
+        ]
+      },
+      { idea, guideline, imageGeneration: true }
+    );
+    expect(twice.ok).toBe(false);
   });
 });

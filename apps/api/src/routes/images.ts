@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { validateImageUpload } from "@ama/integrations";
-import { createRepo, type Bindings } from "../lib/env";
+import { IMAGE_ASSET_KINDS, SLIDE_IMAGE_SLOTS } from "@ama/shared";
+import { z } from "zod";
+import { createCanva, createRepo, type Bindings } from "../lib/env";
 import { imageAssetKey } from "../lib/image-assets";
 
 export const imageRoutes = new Hono<{ Bindings: Bindings }>();
@@ -8,6 +10,36 @@ export const imageRoutes = new Hono<{ Bindings: Bindings }>();
 imageRoutes.get("/accounts/:id/image-assets", async (c) => {
   const repo = createRepo(c.env);
   return c.json({ items: await repo.listImageAssets(c.req.param("id")), mode: repo.mode });
+});
+
+/** Image fields (s1_image …) the account's Canva brand template exposes; images only render into these. */
+imageRoutes.get("/accounts/:id/image-slots", async (c) => {
+  const repo = createRepo(c.env);
+  const account = await repo.getAccount(c.req.param("id"));
+  if (!account) return c.json({ error: "Account not found" }, 404);
+  try {
+    const fields = await createCanva(c.env, repo).getTemplateFieldNames(account.canvaTemplateId);
+    return c.json({ slots: SLIDE_IMAGE_SLOTS.filter((slot) => fields.includes(slot)) });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Could not read the template" }, 502);
+  }
+});
+
+/** Fixed image rules prepended to every AI-generated slide image. */
+imageRoutes.get("/accounts/:id/image-style", async (c) => {
+  const repo = createRepo(c.env);
+  const account = await repo.getAccount(c.req.param("id"));
+  if (!account) return c.json({ error: "Account not found" }, 404);
+  return c.json({ prompt: account.imageStylePrompt ?? "" });
+});
+
+imageRoutes.put("/accounts/:id/image-style", async (c) => {
+  const parsed = z.object({ prompt: z.string().max(2000) }).safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const repo = createRepo(c.env);
+  const account = await repo.updateAccountImageStyle(c.req.param("id"), parsed.data.prompt.trim());
+  if (!account) return c.json({ error: "Account not found" }, 404);
+  return c.json({ prompt: account.imageStylePrompt ?? "" });
 });
 
 imageRoutes.post("/accounts/:id/image-assets", async (c) => {
@@ -20,6 +52,9 @@ imageRoutes.post("/accounts/:id/image-assets", async (c) => {
   const check = validateImageUpload({ contentType: file.type, size: file.size });
   if (!check.ok) return c.json({ error: check.error }, 400);
 
+  const kind = z.enum(IMAGE_ASSET_KINDS).exclude(["generated"]).safeParse(form.get("kind") ?? "asset");
+  if (!kind.success) return c.json({ error: "kind must be asset or reference" }, 400);
+
   const label = String(form.get("label") ?? "").trim() || file.name.replace(/\.[^.]+$/, "");
   const description = String(form.get("description") ?? "").trim();
 
@@ -31,6 +66,7 @@ imageRoutes.post("/accounts/:id/image-assets", async (c) => {
     label: label.slice(0, 80),
     description: description.slice(0, 500),
     contentType: check.contentType,
+    kind: kind.data,
     sizeBytes: file.size
   });
   try {

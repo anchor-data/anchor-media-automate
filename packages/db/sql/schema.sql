@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   auto_run_enabled INTEGER NOT NULL DEFAULT 0,
   auto_run_schedule TEXT NOT NULL DEFAULT '毎日 18:00',
   last_auto_run_at TEXT,
+  image_style_prompt TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
@@ -67,6 +68,7 @@ CREATE TABLE IF NOT EXISTS image_assets (
   label TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   content_type TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'asset' CHECK (kind IN ('asset', 'reference', 'generated')),
   size_bytes INTEGER NOT NULL DEFAULT 0,
   canva_asset_id TEXT,
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
