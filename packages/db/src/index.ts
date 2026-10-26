@@ -7,6 +7,8 @@ import type {
   GuidelineUpsert,
   Idea,
   IdeaStatus,
+  ImageAsset,
+  ImageAssetCreate,
   Job,
   MemoryItem,
   MemoryKind,
@@ -17,7 +19,7 @@ import type {
   ReferenceCreate,
   ReferenceKind
 } from "@ama/shared";
-import { DEFAULT_AUTO_RUN_SCHEDULE } from "@ama/shared";
+import { DEFAULT_AUTO_RUN_SCHEDULE, IMAGE_ASSET_CONTENT_TYPES } from "@ama/shared";
 import { createPhase1Seed } from "./seed";
 
 export type DraftInput = {
@@ -81,6 +83,12 @@ export interface Repository {
   ): Promise<Reference | null>;
   deleteReference(referenceId: string): Promise<boolean>;
 
+  listImageAssets(accountId: string): Promise<ImageAsset[]>;
+  getImageAsset(assetId: string): Promise<ImageAsset | null>;
+  createImageAsset(accountId: string, input: ImageAssetCreate): Promise<ImageAsset>;
+  setImageAssetCanvaId(assetId: string, canvaAssetId: string): Promise<void>;
+  deleteImageAsset(assetId: string): Promise<boolean>;
+
   listMemory(accountId: string, kinds?: MemoryKind[]): Promise<MemoryItem[]>;
   createMemoryItem(
     item: Omit<MemoryItem, "id" | "createdAt"> & { id?: string }
@@ -134,6 +142,7 @@ class MockRepository implements Repository {
   private references = [...this.seed.references];
   private memory = [...this.seed.memory];
   private ideas = [...this.seed.ideas];
+  private imageAssets: ImageAsset[] = [];
 
   async listJobs() {
     return this.jobs;
@@ -297,6 +306,35 @@ class MockRepository implements Repository {
     };
     this.guidelines.push(next);
     return next;
+  }
+
+  async listImageAssets(accountId: string) {
+    return this.imageAssets.filter((a) => a.accountId === accountId);
+  }
+  async getImageAsset(assetId: string) {
+    return this.imageAssets.find((a) => a.id === assetId) ?? null;
+  }
+  async createImageAsset(accountId: string, input: ImageAssetCreate) {
+    const row: ImageAsset = {
+      id: id("img"),
+      accountId,
+      label: input.label,
+      description: input.description ?? "",
+      contentType: input.contentType,
+      sizeBytes: input.sizeBytes,
+      canvaAssetId: null,
+      createdAt: nowIso()
+    };
+    this.imageAssets = [row, ...this.imageAssets];
+    return row;
+  }
+  async setImageAssetCanvaId(assetId: string, canvaAssetId: string) {
+    this.imageAssets = this.imageAssets.map((a) => (a.id === assetId ? { ...a, canvaAssetId } : a));
+  }
+  async deleteImageAsset(assetId: string) {
+    const before = this.imageAssets.length;
+    this.imageAssets = this.imageAssets.filter((a) => a.id !== assetId);
+    return this.imageAssets.length < before;
   }
 
   async listReferences(accountId: string, kind?: ReferenceKind) {
@@ -769,6 +807,49 @@ class TursoRepository implements Repository {
     return created;
   }
 
+  async listImageAssets(accountId: string) {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM image_assets WHERE account_id = ? ORDER BY created_at DESC",
+      args: [accountId]
+    });
+    return result.rows.map(mapImageAssetRow);
+  }
+
+  async getImageAsset(assetId: string) {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM image_assets WHERE id = ?",
+      args: [assetId]
+    });
+    return result.rows[0] ? mapImageAssetRow(result.rows[0]) : null;
+  }
+
+  async createImageAsset(accountId: string, input: ImageAssetCreate) {
+    const rowId = id("img");
+    await this.client.execute({
+      sql: `INSERT INTO image_assets (id, account_id, label, description, content_type, size_bytes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [rowId, accountId, input.label, input.description ?? "", input.contentType, input.sizeBytes, nowIso()]
+    });
+    const created = await this.getImageAsset(rowId);
+    if (!created) throw new Error("Failed to create image asset");
+    return created;
+  }
+
+  async setImageAssetCanvaId(assetId: string, canvaAssetId: string) {
+    await this.client.execute({
+      sql: "UPDATE image_assets SET canva_asset_id = ? WHERE id = ?",
+      args: [canvaAssetId, assetId]
+    });
+  }
+
+  async deleteImageAsset(assetId: string) {
+    const result = await this.client.execute({
+      sql: "DELETE FROM image_assets WHERE id = ?",
+      args: [assetId]
+    });
+    return result.rowsAffected > 0;
+  }
+
   async listReferences(accountId: string, kind?: ReferenceKind) {
     const result = kind
       ? await this.client.execute({
@@ -1197,6 +1278,19 @@ function mapGuidelineRow(row: Record<string, unknown>): Guideline {
     active: sqliteBool(row.active),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
+  };
+}
+
+function mapImageAssetRow(row: Record<string, unknown>): ImageAsset {
+  return {
+    id: String(row.id),
+    accountId: String(row.account_id),
+    label: String(row.label),
+    description: String(row.description ?? ""),
+    contentType: assertEnum(String(row.content_type), IMAGE_ASSET_CONTENT_TYPES, "image content type"),
+    sizeBytes: Number(row.size_bytes ?? 0),
+    canvaAssetId: row.canva_asset_id != null ? String(row.canva_asset_id) : null,
+    createdAt: String(row.created_at)
   };
 }
 

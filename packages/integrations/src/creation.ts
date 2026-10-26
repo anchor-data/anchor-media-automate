@@ -1,7 +1,7 @@
 import { Agent, run, setDefaultOpenAIKey, tool } from "@openai/agents";
 import { z } from "zod";
 import { SLIDE_FIELD_LIMITS, slideDeckSchema, slideFieldsSchema } from "@ama/shared";
-import type { Guideline, Idea, Job, PostType, Reference, SlideDeck, SlideFields } from "@ama/shared";
+import type { Guideline, Idea, ImageAsset, Job, PostType, Reference, SlideDeck, SlideFields } from "@ama/shared";
 import { NotConfiguredError } from "./errors";
 import { logOpenAiRunCost } from "./openai-cost";
 
@@ -10,6 +10,8 @@ export type CreationToolContext = {
   getGuideline: (accountId: string) => Promise<Guideline | null>;
   listReferences: (accountId: string) => Promise<Reference[]>;
   getJob: (jobId: string) => Promise<Job | null>;
+  /** Human-uploaded images the agent may place into slides. Omitted: no image tool. */
+  listImageAssets?: (accountId: string) => Promise<ImageAsset[]>;
 };
 
 export type CreationRunInput = {
@@ -32,7 +34,7 @@ export interface CreationAgent {
 }
 
 /** Context a deck is validated against. */
-export type DeckContext = { idea: Idea; guideline: Guideline };
+export type DeckContext = { idea: Idea; guideline: Guideline; imageAssets?: readonly ImageAsset[] };
 
 export type DeckValidation =
   | { ok: true; deck: SlideDeck }
@@ -74,6 +76,13 @@ export function validateDeck(raw: unknown, context: DeckContext): DeckValidation
         ? "postType must be job_pick: the idea has a job and the guideline enables job picks"
         : "postType must be knowhow: no job pick is allowed for this idea"
     );
+  }
+  const known = new Set((context.imageAssets ?? []).map((asset) => asset.id));
+  const usedSlots = new Set<string>();
+  for (const image of deck.images ?? []) {
+    if (!known.has(image.assetId)) errors.push(`Unknown image asset: ${image.assetId} (use ids from list_image_assets)`);
+    if (usedSlots.has(image.slot)) errors.push(`Image slot used twice: ${image.slot}`);
+    usedSlots.add(image.slot);
   }
   for (const rule of findNgPhraseViolations(deck, context.guideline.ngRules)) {
     errors.push(`Deck contains an NG phrase: ${rule}`);
@@ -159,7 +168,9 @@ const submitDeckSchema = z.object({
     >
   ),
   caption: z.string(),
-  hashtags: z.array(z.string())
+  hashtags: z.array(z.string()),
+  /** Images from list_image_assets placed into slides; empty when none fit. */
+  images: z.array(z.object({ slot: z.string(), assetId: z.string() }))
 });
 
 const getIdeaArgsSchema = z.object({ confirm: z.boolean().nullable() });
@@ -178,6 +189,8 @@ export class OpenAICreationAgent implements CreationAgent {
     if (!idea) throw new Error(`Idea not found: ${input.ideaId}`);
     const guideline = await tools.getGuideline(idea.accountId);
     if (!guideline) throw new Error(`No active guideline for account ${idea.accountId}`);
+
+    const imageAssets = (await tools.listImageAssets?.(idea.accountId)) ?? [];
 
     const state: { accepted: CreationRunOutput | null; rejections: number; lastErrors: string[] } = {
       accepted: null,
@@ -203,6 +216,14 @@ export class OpenAICreationAgent implements CreationAgent {
       parameters: getIdeaArgsSchema,
       execute: async () => tools.listReferences(idea.accountId)
     });
+    const list_image_assets = tool({
+      name: "list_image_assets",
+      description:
+        "List human-uploaded images (id, label, description) that can be placed into slides via submit_deck.images.",
+      parameters: getIdeaArgsSchema,
+      execute: async () =>
+        (await tools.listImageAssets?.(idea.accountId))?.map(({ id, label, description }) => ({ id, label, description })) ?? []
+    });
     const get_job = tool({
       name: "get_job",
       description: "Load a job listing. Only for job_pick decks (idea.jobId set and guideline.jobPickEnabled).",
@@ -217,8 +238,14 @@ export class OpenAICreationAgent implements CreationAgent {
       parameters: submitDeckSchema,
       execute: async (payload) => {
         const result = validateDeck(
-          { postType: payload.postType, slides: payload.slides, caption: payload.caption, hashtags: payload.hashtags },
-          { idea, guideline }
+          {
+            postType: payload.postType,
+            slides: payload.slides,
+            caption: payload.caption,
+            hashtags: payload.hashtags,
+            images: payload.images
+          },
+          { idea, guideline, imageAssets }
         );
         if (!result.ok) {
           state.rejections += 1;
@@ -246,10 +273,11 @@ Rules:
 ${describeSlideLimits()}
 
 Required workflow:
-1) get_idea, get_guideline, list_references (and get_job for job_pick).
-2) Call submit_deck. If it returns ok:false, fix exactly the listed errors and call it again.
-3) Do not answer in free text — submit_deck is your final output.`,
-      tools: [get_idea, get_guideline, list_references, get_job, submit_deck],
+1) get_idea, get_guideline, list_references, list_image_assets (and get_job for job_pick).
+2) Call submit_deck. Put an uploaded image into submit_deck.images ({slot: "s1_image".."s8_image", assetId}) only when its label/description clearly fits that slide; use each slot at most once, and pass [] when nothing fits. Never invent asset ids.
+3) If submit_deck returns ok:false, fix exactly the listed errors and call it again.
+4) Do not answer in free text — submit_deck is your final output.`,
+      tools: [get_idea, get_guideline, list_references, list_image_assets, get_job, submit_deck],
       toolUseBehavior: () =>
         state.accepted || state.rejections >= MAX_SUBMIT_REJECTIONS
           ? { isFinalOutput: true, isInterrupted: undefined, finalOutput: state.accepted?.summary ?? "rejected" }

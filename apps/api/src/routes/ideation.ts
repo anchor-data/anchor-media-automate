@@ -2,6 +2,10 @@ import { Hono } from "hono";
 import { createRepository, type Repository } from "@ama/db";
 import {
   createIdeationAgent,
+  extractReferencePatterns,
+  parseInstagramHandle,
+  parseReferenceFile,
+  ReferenceFileError,
   usedTopicKeys,
   withoutDuplicateIdeas,
   type IdeationToolContext
@@ -18,7 +22,11 @@ type Bindings = {
   TURSO_DATABASE_URL?: string;
   TURSO_AUTH_TOKEN?: string;
   OPENAI_API_KEY?: string;
+  /** Optional: keeps the original uploaded file. Without it only the extracted text is stored. */
+  REFERENCE_FILES?: R2Bucket;
 };
+
+const referenceFileKey = (referenceId: string) => `references/${referenceId}`;
 
 function createRepo(env: Bindings) {
   return createRepository({
@@ -112,6 +120,81 @@ ideationRoutes.post("/accounts/:id/references", async (c) => {
   return c.json({ item, mode: repo.mode }, 201);
 });
 
+ideationRoutes.post("/accounts/:id/reference-files", async (c) => {
+  const form = await c.req.formData();
+  const file = form.get("file");
+  if (!(file instanceof File)) return c.json({ error: "Missing file field" }, 400);
+  const title = form.get("title");
+  let parsed;
+  try {
+    parsed = parseReferenceFile({
+      name: file.name,
+      bytes: new Uint8Array(await file.arrayBuffer()),
+      title: typeof title === "string" ? title : undefined
+    });
+  } catch (error) {
+    if (error instanceof ReferenceFileError) return c.json({ error: error.message }, 400);
+    throw error;
+  }
+  const repo = createRepo(c.env);
+  const account = await repo.getAccount(c.req.param("id"));
+  if (!account) return c.json({ error: "Account not found" }, 404);
+  const item = await repo.createReference(account.id, {
+    kind: "doc",
+    title: parsed.title,
+    sourceNote: `file: ${file.name}${parsed.truncated ? " (truncated)" : ""}`,
+    examplesText: parsed.text,
+    active: true
+  });
+  if (c.env.REFERENCE_FILES) {
+    try {
+      await c.env.REFERENCE_FILES.put(referenceFileKey(item.id), await file.arrayBuffer(), {
+        httpMetadata: { contentType: file.type || "text/plain" },
+        customMetadata: { name: file.name, accountId: account.id }
+      });
+    } catch (error) {
+      await repo.deleteReference(item.id);
+      throw error;
+    }
+  }
+  return c.json({ item, truncated: parsed.truncated, mode: repo.mode }, 201);
+});
+
+const instagramReferenceSchema = z.object({
+  referenceUrl: z
+    .string()
+    .min(1)
+    .refine((value) => parseInstagramHandle(value) !== null, "Enter an Instagram profile url or @handle"),
+  /** Slides of the reference account's carousels (image data URLs or https URLs). */
+  screenshots: z
+    .array(z.string().refine((value) => value.startsWith("data:image/") || value.startsWith("https://")))
+    .min(1)
+    .max(10)
+});
+
+/** Read hook / slide / voice patterns from screenshots of a reference Instagram account into the library. */
+ideationRoutes.post("/accounts/:id/references/from-instagram", async (c) => {
+  const parsed = instagramReferenceSchema.safeParse(await c.req.json());
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const repo = createRepo(c.env);
+  const account = await repo.getAccount(c.req.param("id"));
+  if (!account) return c.json({ error: "Account not found" }, 404);
+
+  let drafts;
+  try {
+    drafts = await extractReferencePatterns({
+      handle: `@${parseInstagramHandle(parsed.data.referenceUrl)}`,
+      screenshots: parsed.data.screenshots,
+      apiKey: c.env.OPENAI_API_KEY
+    });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Could not read the screenshots" }, 502);
+  }
+  const items = [];
+  for (const draft of drafts) items.push(await repo.createReference(account.id, draft));
+  return c.json({ items, mode: repo.mode }, 201);
+});
+
 ideationRoutes.patch("/references/:id", async (c) => {
   const bodySchema = referenceCreateSchema.partial().extend({
     active: z.boolean().optional()
@@ -126,8 +209,10 @@ ideationRoutes.patch("/references/:id", async (c) => {
 
 ideationRoutes.delete("/references/:id", async (c) => {
   const repo = createRepo(c.env);
-  const ok = await repo.deleteReference(c.req.param("id"));
+  const referenceId = c.req.param("id");
+  const ok = await repo.deleteReference(referenceId);
   if (!ok) return c.json({ error: "Reference not found" }, 404);
+  await c.env.REFERENCE_FILES?.delete(referenceFileKey(referenceId));
   return c.json({ ok: true });
 });
 

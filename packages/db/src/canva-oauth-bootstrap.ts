@@ -5,7 +5,7 @@
  * Prereqs, in the Canva developer portal (https://www.canva.com/developers/):
  *   1. Create an Integration (Connect app) in a Canva Enterprise org.
  *   2. Set the authentication redirect URL to exactly http://127.0.0.1:8765/callback
- *   3. Enable scopes: design:meta:read design:content:read design:content:write
+ *   3. Enable scopes: design:meta:read design:content:read design:content:write asset:write
  *      brandtemplate:meta:read brandtemplate:content:read
  *   4. Put CANVA_CLIENT_ID and CANVA_CLIENT_SECRET in the repo-root .env
  *
@@ -27,6 +27,7 @@ const SCOPE = [
   "design:meta:read",
   "design:content:read",
   "design:content:write",
+  "asset:write",
   "brandtemplate:meta:read",
   "brandtemplate:content:read"
 ].join(" ");

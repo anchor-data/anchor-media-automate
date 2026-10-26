@@ -12,6 +12,16 @@
   ],
   "compatibility_date": "2026-10-11",
   "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    {
+      "binding": "REFERENCE_FILES",
+      "bucket_name": "anchor-media-reference-files"
+    },
+    {
+      "binding": "IMAGE_ASSETS",
+      "bucket_name": "anchor-media-image-assets"
+    }
+  ],
   "triggers": {
     "crons": ["0 * * * *"]
   },

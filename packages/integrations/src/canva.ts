@@ -48,8 +48,12 @@ export interface CanvaClient {
   autofill(input: {
     templateId: string;
     fields: Readonly<Record<string, string>>;
+    /** Image field name → Canva asset id (see uploadAsset). */
+    images?: Readonly<Record<string, string>>;
     title?: string;
   }): Promise<{ designId: string }>;
+  /** Upload image bytes to the Canva account; the asset id can be used in autofill image fields. */
+  uploadAsset(input: { name: string; bytes: Uint8Array }): Promise<{ assetId: string }>;
   /** PNG URL for every page of the design, in page order. */
   exportPages(designId: string): Promise<string[]>;
   getThumbnail(designId: string): Promise<CanvaThumbnail | null>;
@@ -70,13 +74,19 @@ export type CanvaDraftDesign = { designId: string; editUrl: string };
 export const TEMPLATE_PAGE_WIDTH = 1080;
 export const TEMPLATE_PAGE_HEIGHT = 1350;
 
-/** Autofill `data` payload: every field is a Canva text data field. */
+export type CanvaAutofillValue = { type: "text"; text: string } | { type: "image"; asset_id: string };
+
+/** Autofill `data` payload: text data fields plus optional image fields backed by Canva assets. */
 export function toAutofillData(
-  fields: Readonly<Record<string, string>>
-): Record<string, { type: "text"; text: string }> {
-  return Object.fromEntries(
-    Object.entries(fields).map(([name, text]) => [name, { type: "text" as const, text }])
-  );
+  fields: Readonly<Record<string, string>>,
+  images: Readonly<Record<string, string>> = {}
+): Record<string, CanvaAutofillValue> {
+  return {
+    ...Object.fromEntries(Object.entries(fields).map(([name, text]) => [name, { type: "text" as const, text }])),
+    ...Object.fromEntries(
+      Object.entries(images).map(([name, assetId]) => [name, { type: "image" as const, asset_id: assetId }])
+    )
+  };
 }
 
 /** Pull the design id out of a Canva design URL; `canva.link` shortlinks are followed. */
@@ -103,6 +113,9 @@ export class MockCanvaClient implements CanvaClient {
   mode: "mock" = "mock";
   async autofill(input: { templateId: string }) {
     return { designId: `design_${input.templateId}` };
+  }
+  async uploadAsset(input: { name: string }) {
+    return { assetId: `asset_${input.name.replace(/\W+/g, "_")}` };
   }
   async exportPages(designId: string) {
     return Array.from(
@@ -158,6 +171,15 @@ type CanvaJob = {
   };
 };
 
+type CanvaAssetUploadJob = {
+  job: {
+    id: string;
+    status: "in_progress" | "success" | "failed";
+    asset?: { id: string };
+    error?: { message?: string };
+  };
+};
+
 type CanvaImportJob = {
   job: {
     id: string;
@@ -188,12 +210,13 @@ export class CanvaApiClient implements CanvaClient {
   async autofill(input: {
     templateId: string;
     fields: Readonly<Record<string, string>>;
+    images?: Readonly<Record<string, string>>;
     title?: string;
   }): Promise<{ designId: string }> {
     const created = await this.request<CanvaJob>("POST", "/autofills", {
       brand_template_id: input.templateId,
       ...(input.title ? { title: input.title } : {}),
-      data: toAutofillData(input.fields)
+      data: toAutofillData(input.fields, input.images)
     });
     const done = await this.poll(`/autofills/${created.job.id}`, created);
     const designId = done.job.result?.design?.id;
@@ -201,6 +224,19 @@ export class CanvaApiClient implements CanvaClient {
       throw new Error("Canva autofill finished without a design id");
     }
     return { designId };
+  }
+
+  async uploadAsset(input: { name: string; bytes: Uint8Array }): Promise<{ assetId: string }> {
+    const created = await this.request<CanvaAssetUploadJob>("POST", "/asset-uploads", input.bytes, {
+      "Content-Type": "application/octet-stream",
+      "Asset-Upload-Metadata": JSON.stringify({ name_base64: toBase64(input.name) })
+    });
+    const done = await this.poll(`/asset-uploads/${created.job.id}`, created);
+    const assetId = done.job.asset?.id;
+    if (!assetId) {
+      throw new Error("Canva asset upload finished without an asset id");
+    }
+    return { assetId };
   }
 
   async exportPages(designId: string): Promise<string[]> {
@@ -296,7 +332,7 @@ export class CanvaApiClient implements CanvaClient {
     };
   }
 
-  private async poll<T extends Pick<CanvaJob, "job"> | CanvaImportJob>(path: string, initial: T): Promise<T> {
+  private async poll<T extends Pick<CanvaJob, "job"> | CanvaImportJob | CanvaAssetUploadJob>(path: string, initial: T): Promise<T> {
     let current = initial;
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
       if (current.job.status === "success") return current;

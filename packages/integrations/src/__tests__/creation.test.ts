@@ -123,3 +123,55 @@ describe("MockCreationAgent", () => {
     ).rejects.toThrow(/Idea not found/);
   });
 });
+
+describe("validateDeck images", () => {
+  const asset = {
+    id: "img_1",
+    accountId: "acc_1",
+    label: "オフィス",
+    description: "",
+    contentType: "image/png" as const,
+    sizeBytes: 10,
+    canvaAssetId: null,
+    createdAt: "2026-01-01"
+  };
+  const base = { postType: "knowhow", slides: validSlides(), caption: "c", hashtags: [] };
+
+  it("accepts images that reference known assets", () => {
+    const result = validateDeck(
+      { ...base, images: [{ slot: "s1_image", assetId: "img_1" }] },
+      { idea, guideline, imageAssets: [asset] }
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an unknown asset id", () => {
+    const result = validateDeck(
+      { ...base, images: [{ slot: "s1_image", assetId: "nope" }] },
+      { idea, guideline, imageAssets: [asset] }
+    );
+    expect(result).toEqual({ ok: false, errors: [expect.stringContaining("Unknown image asset: nope")] });
+  });
+
+  it("rejects the same slot used twice", () => {
+    const result = validateDeck(
+      {
+        ...base,
+        images: [
+          { slot: "s1_image", assetId: "img_1" },
+          { slot: "s1_image", assetId: "img_1" }
+        ]
+      },
+      { idea, guideline, imageAssets: [asset] }
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a slot that is not an image field", () => {
+    const result = validateDeck(
+      { ...base, images: [{ slot: "s9_image", assetId: "img_1" }] },
+      { idea, guideline, imageAssets: [asset] }
+    );
+    expect(result.ok).toBe(false);
+  });
+});
