@@ -1,5 +1,6 @@
-import { ApprovalRulesPage } from "../../../components/pages/settings-pages";
+import { redirect } from "next/navigation";
 
+/** Temporarily disabled: the screen component is kept so it can be re-enabled. */
 export default function Page() {
-  return <ApprovalRulesPage />;
+  redirect("/calendar");
 }

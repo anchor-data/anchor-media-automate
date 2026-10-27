@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
-export default function SettingsIndex() {
-  redirect("/settings/members");
+/** Temporarily disabled: the screen component is kept so it can be re-enabled. */
+export default function Page() {
+  redirect("/calendar");
 }

@@ -1,5 +1,6 @@
-import { AnalyticsBenchmarkPage } from "../../../components/pages/analytics-benchmark-page";
+import { redirect } from "next/navigation";
 
+/** Temporarily disabled: the screen component is kept so it can be re-enabled. */
 export default function Page() {
-  return <AnalyticsBenchmarkPage />;
+  redirect("/calendar");
 }

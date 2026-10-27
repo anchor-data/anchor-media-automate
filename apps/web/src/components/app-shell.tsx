@@ -95,6 +95,16 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="rail-items">
           {NAV_SECTIONS.map((item) => {
             const active = item.id === section.id;
+            if (item.disabled) {
+              return (
+                <span key={item.id} className="rail-item disabled" aria-disabled="true" title="現在ご利用いただけません">
+                  <span className="rail-icon">
+                    <Icon name={item.icon} size={22} />
+                  </span>
+                  <span>{item.label}</span>
+                </span>
+              );
+            }
             return (
               <Link
                 key={item.id}

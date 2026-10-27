@@ -126,6 +126,7 @@ code {
 .pad-t-16 { padding-top: 16px; }
 .pad-t-24 { padding-top: 24px; }
 .pad-b-16 { padding-bottom: 16px; }
+.pad-b-8 { padding-bottom: 8px; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
@@ -162,6 +163,8 @@ code {
 .rail-item { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; line-height: 14px; color: var(--nav); }
 .rail-icon { width: 52px; height: 36px; border-radius: 12px; display: grid; place-items: center; }
 .rail-item:hover .rail-icon { background: rgba(223, 232, 251, 0.6); }
+.rail-item.disabled { opacity: 0.4; cursor: not-allowed; }
+.rail-item.disabled:hover .rail-icon { background: none; }
 .rail-item.active { color: var(--accent); font-weight: 700; }
 .rail-item.active .rail-icon { background: var(--accent-soft); }
 .rail-bottom { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 16px; }
@@ -575,11 +578,17 @@ button.trow:hover, a.trow:hover { background: var(--accent-wash); }
 .steps-list { margin: 16px 0; }
 .steps-list li { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .io-box { margin-top: 14px; padding: 12px; background: var(--gray); border-radius: 8px; overflow: auto; font-family: ui-monospace, Menlo, monospace; }
-.account-table li { display: flex; align-items: center; gap: 16px; padding: 16px 12px; border-top: 1px solid var(--line); }
+.account-table li { border-top: 1px solid var(--line); }
+.account-row-btn { display: grid; grid-template-columns: 40px minmax(0, 1fr) 124px 124px 56px; align-items: center; gap: 16px; width: 100%; padding: 16px 12px; }
+.account-row-btn .link { white-space: nowrap; text-align: right; }
+.account-name, .col-status, .col-guide { min-width: 0; }
+.col-status .small, .col-guide .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+.account-row-btn:hover { background: var(--accent-wash); }
+.detail-pane.wide-detail { width: 460px; }
+.pad-tabs .eyebrow.plain { margin-bottom: 8px; }
 .account-table li:last-child { border-bottom: 1px solid var(--line); }
 .account-table li.active { background: var(--accent-wash); }
-.col-status { width: 150px; flex-shrink: 0; }
-.col-guide { width: 140px; flex-shrink: 0; }
 .settings-panel { margin-top: 24px; }
 .setting-row { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
 .setting-row.top { align-items: flex-start; }
@@ -620,4 +629,16 @@ details[open] > summary { margin-bottom: 8px; }
 .toast {
   position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 60; padding: 10px 18px; border-radius: 10px;
   background: var(--ink); color: #fff; font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(19, 32, 44, 0.3);
+}
+
+.agent-profile { display: flex; flex-direction: column; gap: 8px; }
+.agent-profile .guide-section { border-bottom-color: var(--line-strong); }
+
+@keyframes panel-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.detail-pane.wide-detail { animation: panel-in 0.24s cubic-bezier(0.2, 0.7, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .detail-pane.wide-detail { animation: none; }
 }

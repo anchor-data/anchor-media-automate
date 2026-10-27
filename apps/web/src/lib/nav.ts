@@ -14,6 +14,8 @@ export interface NavSection {
   /** Heading shown above the secondary menu. */
   readonly heading: string;
   readonly items: readonly NavLeaf[];
+  /** Temporarily switched off: shown greyed out in the rail and its routes redirect away. */
+  readonly disabled?: boolean;
 }
 
 export const NAV_SECTIONS: readonly NavSection[] = [
@@ -37,11 +39,12 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     items: [
       { href: "/assets", label: "アセットライブラリ" },
       { href: "/templates", label: "テンプレート管理" },
-      { href: "/guidelines", label: "ガイドライン・参照" }
+      { href: "/guidelines", label: "参照資料・メモリ" }
     ]
   },
   {
     id: "analytics",
+    disabled: true,
     label: "分析",
     icon: "bar-chart",
     heading: "分析",
@@ -57,12 +60,13 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     icon: "bot",
     heading: "エージェント",
     items: [
-      { href: "/agent/logs", label: "実行ログ" },
-      { href: "/agent/accounts", label: "アカウント管理" }
+      { href: "/agent/accounts", label: "アカウント管理" },
+      { href: "/agent/logs", label: "実行ログ" }
     ]
   },
   {
     id: "settings",
+    disabled: true,
     label: "設定",
     icon: "sliders",
     heading: "設定",
