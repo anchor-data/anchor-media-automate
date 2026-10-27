@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   auto_run_enabled INTEGER NOT NULL DEFAULT 0,
   auto_run_schedule TEXT NOT NULL DEFAULT '毎日 18:00',
   last_auto_run_at TEXT,
+  image_style_prompt TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
@@ -59,6 +60,22 @@ CREATE TABLE IF NOT EXISTS content_references (
 
 CREATE INDEX IF NOT EXISTS idx_content_references_account_kind
   ON content_references(account_id, kind, active);
+
+-- Human-uploaded images the creation agent may place into slides (bytes live in R2)
+CREATE TABLE IF NOT EXISTS image_assets (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  label TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  content_type TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'asset' CHECK (kind IN ('asset', 'reference', 'generated')),
+  size_bytes INTEGER NOT NULL DEFAULT 0,
+  canva_asset_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_assets_account
+  ON image_assets(account_id, created_at);
 
 -- System memory for dedupe / learning (Backend writes; humans can remove)
 CREATE TABLE IF NOT EXISTS memory_items (

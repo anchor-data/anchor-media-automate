@@ -7,9 +7,10 @@ import {
   type CreationToolContext
 } from "@ama/integrations";
 import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
-import { slideFieldsSchema } from "@ama/shared";
+import { slideFieldsSchema, slideImagesFrom } from "@ama/shared";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
+import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
 import { renderPost } from "../lib/render";
 
 export const creationRoutes = new Hono<{ Bindings: Bindings }>();
@@ -19,7 +20,10 @@ function toolContext(repo: Repository): CreationToolContext {
     getIdea: (ideaId) => repo.getIdea(ideaId),
     getGuideline: (accountId) => repo.getActiveGuideline(accountId),
     listReferences: (accountId) => repo.listReferences(accountId),
-    getJob: async (jobId) => (await repo.listJobs()).find((job) => job.id === jobId) ?? null
+    getJob: async (jobId) => (await repo.listJobs()).find((job) => job.id === jobId) ?? null,
+    // Only "asset" images are offered for placement; "reference" sheets feed AI generation instead.
+    listImageAssets: (accountId) => repo.listImageAssets(accountId, ["asset"]),
+    getImageStylePrompt: async (accountId) => (await repo.getAccount(accountId))?.imageStylePrompt ?? ""
   };
 }
 
@@ -38,10 +42,17 @@ export async function generatePost(
   try {
     await repo.updatePost(postId, { generationStatus: "generating_copy", generationError: null });
     const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(input, toolContext(repo));
+    const previousImages = slideImagesFrom((await repo.getPost(postId))?.post.slidesJson);
+    const { images, warnings } = await generateDeckImages(
+      repo,
+      { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
+      input.accountId,
+      output.deck
+    );
     const post = await repo.updatePost(postId, {
       caption: output.deck.caption,
       hashtags: output.deck.hashtags,
-      slidesJson: output.deck.slides,
+      slidesJson: { ...output.deck.slides, images },
       postType: output.deck.postType
     });
     const run: AgentRun = {
@@ -50,10 +61,11 @@ export async function generatePost(
       createdPostId: postId,
       kind,
       summary: output.summary,
-      outputJson: { reasoning: output.reasoning, ideaId: input.ideaId }
+      outputJson: { reasoning: [...output.reasoning, ...warnings], ideaId: input.ideaId }
     };
     await repo.createAgentRun(run);
-    if (post) await renderPost(repo, createCanva(env, repo), post);
+    await discardGeneratedImages(repo, env.IMAGE_ASSETS, previousImages);
+    if (post) await renderPost(repo, createCanva(env, repo), post, { imageBucket: env.IMAGE_ASSETS });
   } catch (error) {
     // renderPost already marks its own failures; this covers agent failures.
     await repo.updatePost(postId, { generationStatus: "failed", generationError: errorMessage(error) });
@@ -114,10 +126,15 @@ creationRoutes.patch("/posts/:id", async (c) => {
       const deck: SlideDeck = {
         postType: post.postType,
         slides: parsed.data.slides,
+        images: slideImagesFrom(post.slidesJson),
         caption: parsed.data.caption ?? post.caption,
         hashtags: parsed.data.hashtags ?? post.hashtags ?? []
       };
-      const check = validateDeck(deck, { idea, guideline });
+      const check = validateDeck(deck, {
+        idea,
+        guideline,
+        imageAssets: await repo.listImageAssets(idea.accountId, ["asset", "reference", "generated"])
+      });
       if (!check.ok) return c.json({ error: check.errors }, 422);
     }
   }
@@ -126,7 +143,8 @@ creationRoutes.patch("/posts/:id", async (c) => {
     title: parsed.data.title,
     caption: parsed.data.caption,
     hashtags: parsed.data.hashtags,
-    slidesJson: slides,
+    // Edited text keeps the images the agent chose.
+    slidesJson: slides ? { ...slides, images: slideImagesFrom(post.slidesJson) } : undefined,
     // Edited slides make the stored assets stale until POST /posts/:id/render.
     ...(parsed.data.slides ? { generationStatus: "pending" as const } : {})
   });
@@ -158,7 +176,7 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
         feedback: parsed.data.feedback,
         previousDeck:
           previous.success && post.postType
-            ? { postType: post.postType, slides: previous.data, caption: post.caption, hashtags: post.hashtags ?? [] }
+            ? { postType: post.postType, slides: previous.data, images: slideImagesFrom(post.slidesJson), caption: post.caption, hashtags: post.hashtags ?? [] }
             : undefined
       },
       "regenerate"
@@ -176,7 +194,10 @@ creationRoutes.post("/posts/:id/render", async (c) => {
   const detail = await repo.getPost(c.req.param("id"));
   if (!detail) return c.json({ error: "Post not found" }, 404);
   try {
-    await renderPost(repo, createCanva(c.env, repo), detail.post, { reexport: parsed.data.reexport });
+    await renderPost(repo, createCanva(c.env, repo), detail.post, {
+      reexport: parsed.data.reexport,
+      imageBucket: c.env.IMAGE_ASSETS
+    });
   } catch (error) {
     return c.json({ error: errorMessage(error) }, 502);
   }

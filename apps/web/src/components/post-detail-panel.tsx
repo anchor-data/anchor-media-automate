@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Idea } from "@ama/shared";
 import { Icon } from "./icon";
+import { SlideCarousel } from "./slide-carousel";
 import { WorkflowSteps, type WorkflowStep } from "./workflow-steps";
 import { useWorkspace } from "./workspace-context";
 import { canvaDesignUrl } from "../lib/canva";
@@ -28,7 +29,6 @@ interface SlidePreviewProps {
 }
 
 function SlidePreview({ post, onReload, onRetry }: SlidePreviewProps) {
-  const [index, setIndex] = useState(0);
   const status = post.generationStatus;
 
   if (status && status in GENERATION_LABEL) {
@@ -60,27 +60,21 @@ function SlidePreview({ post, onReload, onRetry }: SlidePreviewProps) {
       </div>
     );
   }
-  const current = Math.min(index, urls.length - 1);
   const designUrl = canvaDesignUrl(post.canvaDesignId);
   return (
     <div className="stack gap-8">
-      {/* eslint-disable-next-line @next/next/no-img-element -- signed Canva CDN URLs, not optimizable */}
-      <img className="slide-preview" src={urls[current]} alt={`スライド ${current + 1}`} />
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <button className="btn ghost" disabled={current === 0} onClick={() => setIndex(current - 1)}>
-          前へ
-        </button>
-        <span className="small muted">
-          {current + 1} / {urls.length}
-        </span>
+      <SlideCarousel urls={urls} />
+      {post.status === "draft" && post.ideaId ? (
         <button
-          className="btn ghost"
-          disabled={current === urls.length - 1}
-          onClick={() => setIndex(current + 1)}
+          className="btn outline block"
+          onClick={() => {
+            if (window.confirm("文章と画像をもう一度生成します。現在の内容は上書きされます。よろしいですか？")) onRetry();
+          }}
         >
-          次へ
+          <Icon name="sparkles" size={14} />
+          もう一度生成
         </button>
-      </div>
+      ) : null}
       <button className="btn outline block" onClick={onReload}>
         プレビューを更新（URL期限切れ時）
       </button>

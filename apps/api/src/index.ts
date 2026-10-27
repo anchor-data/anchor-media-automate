@@ -11,6 +11,7 @@ import { accountRoutes } from "./routes/accounts";
 import { canvaRoutes } from "./routes/canva";
 import { creationRoutes } from "./routes/creation";
 import { ideationRoutes } from "./routes/ideation";
+import { imageRoutes } from "./routes/images";
 
 const app = new Hono<{ Bindings: Bindings }>();
 app.use("*", async (c, next) => {
@@ -20,6 +21,7 @@ app.use("*", async (c, next) => {
 
 app.route("/", ideationRoutes);
 app.route("/", creationRoutes);
+app.route("/", imageRoutes);
 app.route("/", canvaRoutes);
 app.route("/", accountRoutes);
 

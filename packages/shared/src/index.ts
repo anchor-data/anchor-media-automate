@@ -10,7 +10,9 @@ export const accountSchema = z.object({
   autoRunEnabled: z.boolean().optional(),
   /** One of AUTO_RUN_SCHEDULES (JST). */
   autoRunSchedule: z.string().optional(),
-  lastAutoRunAt: z.string().nullable().optional()
+  lastAutoRunAt: z.string().nullable().optional(),
+  /** Fixed image rules (subject, style, palette, background) prepended to every generated slide image prompt. */
+  imageStylePrompt: z.string().optional()
 });
 export type Account = z.infer<typeof accountSchema>;
 
@@ -263,9 +265,77 @@ export const slideFieldsSchema = z.object({
 });
 export type SlideFields = z.infer<typeof slideFieldsSchema>;
 
+/** Optional Canva image fields on the brand template, one per page (s1_image … s8_image). */
+export const SLIDE_IMAGE_SLOTS = Array.from({ length: 8 }, (_, index) => `s${index + 1}_image`) as [
+  string,
+  ...string[]
+];
+export const slideImageSlotSchema = z.enum(SLIDE_IMAGE_SLOTS);
+
+/** An uploaded image asset placed into one slide's image field. */
+export const slideImageSchema = z.object({
+  slot: slideImageSlotSchema,
+  assetId: z.string().min(1)
+});
+export type SlideImage = z.infer<typeof slideImageSchema>;
+
+/**
+ * Images ride along in `posts.slides_json` next to the text fields. slideFieldsSchema strips them
+ * on parse, so text handling is unaffected; use this to read them back.
+ */
+export function slideImagesFrom(slidesJson: unknown): SlideImage[] {
+  const raw = (slidesJson as { images?: unknown } | null | undefined)?.images;
+  const parsed = z.array(slideImageSchema).safeParse(raw);
+  return parsed.success ? parsed.data : [];
+}
+
+export const IMAGE_ASSET_CONTENT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+export const IMAGE_ASSET_MAX_BYTES = 5_000_000;
+
+/**
+ * asset: placed into slides as-is (logo, photo).
+ * reference: style/subject sample sent with every AI image generation.
+ * generated: produced by the app for one post (hidden from the library).
+ */
+export const IMAGE_ASSET_KINDS = ["asset", "reference", "generated"] as const;
+
+/** Human-uploaded image the creation agent may place into slides. Bytes live in R2. */
+export const imageAssetSchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  label: z.string(),
+  description: z.string(),
+  contentType: z.enum(IMAGE_ASSET_CONTENT_TYPES),
+  kind: z.enum(IMAGE_ASSET_KINDS),
+  sizeBytes: z.number().int().nonnegative(),
+  /** Canva asset id once uploaded to Canva; reused on later renders. */
+  canvaAssetId: z.string().nullable(),
+  createdAt: z.string()
+});
+export type ImageAsset = z.infer<typeof imageAssetSchema>;
+
+export const imageAssetCreateSchema = z.object({
+  label: z.string().min(1).max(80),
+  description: z.string().max(500).default(""),
+  contentType: imageAssetSchema.shape.contentType,
+  kind: imageAssetSchema.shape.kind.default("asset"),
+  sizeBytes: z.number().int().nonnegative()
+});
+export type ImageAssetCreate = z.input<typeof imageAssetCreateSchema>;
+
+/** Scene-only prompt for one slide; the account's fixed style prompt is prepended by the backend. */
+export const slideImagePromptSchema = z.object({
+  slot: slideImageSlotSchema,
+  scene: z.string().min(1).max(400)
+});
+export type SlideImagePrompt = z.infer<typeof slideImagePromptSchema>;
+
 export const slideDeckSchema = z.object({
   postType: postTypeSchema,
   slides: slideFieldsSchema,
+  images: z.array(slideImageSchema).max(SLIDE_IMAGE_SLOTS.length).optional(),
+  /** Slides whose image should be AI-generated; resolved into `images` before the post is stored. */
+  imagePrompts: z.array(slideImagePromptSchema).max(SLIDE_IMAGE_SLOTS.length).optional(),
   caption: z.string().max(2200),
   hashtags: z.array(z.string()).max(30)
 });

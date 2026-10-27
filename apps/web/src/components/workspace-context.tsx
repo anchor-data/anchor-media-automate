@@ -17,6 +17,8 @@ import {
   createReference,
   deleteMemory,
   deleteReference,
+  uploadReferenceFile,
+  importInstagramReferences,
   fetchWorkspaceBundle,
   getGuideline,
   getPostDetail,
@@ -91,6 +93,8 @@ interface WorkspaceValue {
   }) => Promise<IdeaCandidate[]>;
   saveGuideline: (accountId: string, patch: Partial<MockAccount>) => Promise<void>;
   addReference: (accountId: string, title: string, examplesText: string) => Promise<void>;
+  uploadReference: (accountId: string, file: File) => Promise<{ truncated: boolean }>;
+  importInstagramReference: (accountId: string, referenceUrl: string, screenshots: string[]) => Promise<number>;
   removeReference: (referenceId: string) => Promise<void>;
   removeMemory: (memoryId: string) => Promise<void>;
   refreshAccountSideData: (accountId: string) => Promise<void>;
@@ -585,6 +589,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           active: true
         });
         setReferences((prev) => [created.item, ...prev]);
+      },
+      uploadReference: async (accountId, file) => {
+        if (!apiReady) throw new Error("API未接続のためアップロードできません");
+        const created = await uploadReferenceFile(accountId, file);
+        setReferences((prev) => [created.item, ...prev]);
+        return { truncated: created.truncated };
+      },
+      importInstagramReference: async (accountId, referenceUrl, screenshots) => {
+        if (!apiReady) throw new Error("API未接続のためインポートできません");
+        const created = await importInstagramReferences(accountId, referenceUrl, screenshots);
+        setReferences((prev) => [...created.items, ...prev]);
+        return created.items.length;
       },
       removeReference: async (referenceId) => {
         if (apiReady) await deleteReference(referenceId);

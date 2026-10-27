@@ -11,6 +11,9 @@ export type Bindings = {
   CANVA_REFRESH_TOKEN?: string;
   INSTAGRAM_ACCESS_TOKEN?: string;
   ALLOWED_ORIGIN?: string;
+  REFERENCE_FILES?: R2Bucket;
+  /** Uploaded slide images placed into Canva autofill image fields. */
+  IMAGE_ASSETS?: R2Bucket;
 };
 
 export function createRepo(env: Bindings): Repository {

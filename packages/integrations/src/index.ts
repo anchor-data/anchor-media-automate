@@ -1,6 +1,13 @@
 import type { Account, Job, Post } from "@ama/shared";
 export { NotConfiguredError } from "./errors";
 export {
+  REFERENCE_FILE_MAX_BYTES,
+  REFERENCE_TEXT_MAX_CHARS,
+  ReferenceFileError,
+  parseReferenceFile,
+  type ParsedReferenceFile
+} from "./reference-file";
+export {
   createIdeationAgent,
   MockIdeationAgent,
   OpenAIIdeationAgent,
@@ -13,6 +20,16 @@ export {
   type IdeationToolContext
 } from "./ideation";
 import { NotConfiguredError } from "./errors";
+export { estimateOpenAiImageCost, logOpenAiImageBatchCost, logOpenAiImageCost } from "./openai-cost";
+export {
+  composeImagePrompt,
+  generateSlideImage,
+  type GenerateSlideImageInput,
+  type GeneratedImage,
+  type ReferenceImage
+} from "./image-generation";
+export { extractReferencePatterns, type ExtractReferenceInput } from "./reference-extract";
+export { resolveSlideImages, validateImageUpload, type ImageUploadCheck } from "./slide-images";
 export {
   CanvaApiClient,
   MockCanvaClient,

@@ -7,6 +7,8 @@ import type {
   GuidelineUpsert,
   Idea,
   IdeaStatus,
+  ImageAsset,
+  ImageAssetCreate,
   Job,
   MemoryItem,
   MemoryKind,
@@ -17,7 +19,10 @@ import type {
   ReferenceCreate,
   ReferenceKind
 } from "@ama/shared";
-import { DEFAULT_AUTO_RUN_SCHEDULE } from "@ama/shared";
+import { DEFAULT_AUTO_RUN_SCHEDULE, IMAGE_ASSET_CONTENT_TYPES, IMAGE_ASSET_KINDS } from "@ama/shared";
+
+/** What the dashboard library shows and the agent can use: everything except per-post generated images. */
+const LIBRARY_IMAGE_KINDS: readonly ImageAsset["kind"][] = ["asset", "reference"];
 import { createPhase1Seed } from "./seed";
 
 export type DraftInput = {
@@ -43,6 +48,7 @@ export interface Repository {
   createAccount(account: Account): Promise<Account>;
   updateAccountTemplate(accountId: string, canvaTemplateId: string): Promise<Account | null>;
   updateAccountAutoRun(accountId: string, settings: AutoRunSettings): Promise<Account | null>;
+  updateAccountImageStyle(accountId: string, imageStylePrompt: string): Promise<Account | null>;
   markAutoRun(accountId: string, at: string): Promise<void>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
@@ -80,6 +86,13 @@ export interface Repository {
     fields: Partial<ReferenceCreate> & { active?: boolean }
   ): Promise<Reference | null>;
   deleteReference(referenceId: string): Promise<boolean>;
+
+  /** Without `kinds`, generated per-post images are excluded. */
+  listImageAssets(accountId: string, kinds?: readonly ImageAsset["kind"][]): Promise<ImageAsset[]>;
+  getImageAsset(assetId: string): Promise<ImageAsset | null>;
+  createImageAsset(accountId: string, input: ImageAssetCreate): Promise<ImageAsset>;
+  setImageAssetCanvaId(assetId: string, canvaAssetId: string): Promise<void>;
+  deleteImageAsset(assetId: string): Promise<boolean>;
 
   listMemory(accountId: string, kinds?: MemoryKind[]): Promise<MemoryItem[]>;
   createMemoryItem(
@@ -134,6 +147,7 @@ class MockRepository implements Repository {
   private references = [...this.seed.references];
   private memory = [...this.seed.memory];
   private ideas = [...this.seed.ideas];
+  private imageAssets: ImageAsset[] = [];
 
   async listJobs() {
     return this.jobs;
@@ -159,6 +173,13 @@ class MockRepository implements Repository {
     const index = this.accounts.findIndex((a) => a.id === accountId);
     if (index < 0) return null;
     const updated = { ...this.accounts[index]!, canvaTemplateId };
+    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
+    return updated;
+  }
+  async updateAccountImageStyle(accountId: string, imageStylePrompt: string) {
+    const index = this.accounts.findIndex((a) => a.id === accountId);
+    if (index < 0) return null;
+    const updated = { ...this.accounts[index]!, imageStylePrompt };
     this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
     return updated;
   }
@@ -297,6 +318,36 @@ class MockRepository implements Repository {
     };
     this.guidelines.push(next);
     return next;
+  }
+
+  async listImageAssets(accountId: string, kinds: readonly ImageAsset["kind"][] = LIBRARY_IMAGE_KINDS) {
+    return this.imageAssets.filter((a) => a.accountId === accountId && kinds.includes(a.kind));
+  }
+  async getImageAsset(assetId: string) {
+    return this.imageAssets.find((a) => a.id === assetId) ?? null;
+  }
+  async createImageAsset(accountId: string, input: ImageAssetCreate) {
+    const row: ImageAsset = {
+      id: id("img"),
+      accountId,
+      label: input.label,
+      description: input.description ?? "",
+      contentType: input.contentType,
+      kind: input.kind ?? "asset",
+      sizeBytes: input.sizeBytes,
+      canvaAssetId: null,
+      createdAt: nowIso()
+    };
+    this.imageAssets = [row, ...this.imageAssets];
+    return row;
+  }
+  async setImageAssetCanvaId(assetId: string, canvaAssetId: string) {
+    this.imageAssets = this.imageAssets.map((a) => (a.id === assetId ? { ...a, canvaAssetId } : a));
+  }
+  async deleteImageAsset(assetId: string) {
+    const before = this.imageAssets.length;
+    this.imageAssets = this.imageAssets.filter((a) => a.id !== assetId);
+    return this.imageAssets.length < before;
   }
 
   async listReferences(accountId: string, kind?: ReferenceKind) {
@@ -505,6 +556,14 @@ class TursoRepository implements Repository {
     await this.client.execute({
       sql: "UPDATE accounts SET canva_template_id = ?, updated_at = ? WHERE id = ?",
       args: [canvaTemplateId, nowIso(), accountId]
+    });
+    return this.getAccount(accountId);
+  }
+
+  async updateAccountImageStyle(accountId: string, imageStylePrompt: string) {
+    await this.client.execute({
+      sql: "UPDATE accounts SET image_style_prompt = ?, updated_at = ? WHERE id = ?",
+      args: [imageStylePrompt, nowIso(), accountId]
     });
     return this.getAccount(accountId);
   }
@@ -767,6 +826,59 @@ class TursoRepository implements Repository {
     const created = await this.getActiveGuideline(accountId);
     if (!created) throw new Error("Failed to upsert guideline");
     return created;
+  }
+
+  async listImageAssets(accountId: string, kinds: readonly ImageAsset["kind"][] = LIBRARY_IMAGE_KINDS) {
+    const result = await this.client.execute({
+      sql: `SELECT * FROM image_assets WHERE account_id = ? AND kind IN (${kinds.map(() => "?").join(", ")})
+            ORDER BY created_at DESC`,
+      args: [accountId, ...kinds]
+    });
+    return result.rows.map(mapImageAssetRow);
+  }
+
+  async getImageAsset(assetId: string) {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM image_assets WHERE id = ?",
+      args: [assetId]
+    });
+    return result.rows[0] ? mapImageAssetRow(result.rows[0]) : null;
+  }
+
+  async createImageAsset(accountId: string, input: ImageAssetCreate) {
+    const rowId = id("img");
+    await this.client.execute({
+      sql: `INSERT INTO image_assets (id, account_id, label, description, content_type, kind, size_bytes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        rowId,
+        accountId,
+        input.label,
+        input.description ?? "",
+        input.contentType,
+        input.kind ?? "asset",
+        input.sizeBytes,
+        nowIso()
+      ]
+    });
+    const created = await this.getImageAsset(rowId);
+    if (!created) throw new Error("Failed to create image asset");
+    return created;
+  }
+
+  async setImageAssetCanvaId(assetId: string, canvaAssetId: string) {
+    await this.client.execute({
+      sql: "UPDATE image_assets SET canva_asset_id = ? WHERE id = ?",
+      args: [canvaAssetId, assetId]
+    });
+  }
+
+  async deleteImageAsset(assetId: string) {
+    const result = await this.client.execute({
+      sql: "DELETE FROM image_assets WHERE id = ?",
+      args: [assetId]
+    });
+    return result.rowsAffected > 0;
   }
 
   async listReferences(accountId: string, kind?: ReferenceKind) {
@@ -1101,7 +1213,8 @@ function mapAccountRow(row: Record<string, unknown>): Account {
     tone: String(row.tone),
     autoRunEnabled: sqliteBool(row.auto_run_enabled),
     autoRunSchedule: row.auto_run_schedule ? String(row.auto_run_schedule) : DEFAULT_AUTO_RUN_SCHEDULE,
-    lastAutoRunAt: row.last_auto_run_at == null ? null : String(row.last_auto_run_at)
+    lastAutoRunAt: row.last_auto_run_at == null ? null : String(row.last_auto_run_at),
+    imageStylePrompt: row.image_style_prompt ? String(row.image_style_prompt) : ""
   };
 }
 
@@ -1197,6 +1310,20 @@ function mapGuidelineRow(row: Record<string, unknown>): Guideline {
     active: sqliteBool(row.active),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
+  };
+}
+
+function mapImageAssetRow(row: Record<string, unknown>): ImageAsset {
+  return {
+    id: String(row.id),
+    accountId: String(row.account_id),
+    label: String(row.label),
+    description: String(row.description ?? ""),
+    contentType: assertEnum(String(row.content_type), IMAGE_ASSET_CONTENT_TYPES, "image content type"),
+    kind: assertEnum(String(row.kind ?? "asset"), IMAGE_ASSET_KINDS, "image asset kind"),
+    sizeBytes: Number(row.size_bytes ?? 0),
+    canvaAssetId: row.canva_asset_id != null ? String(row.canva_asset_id) : null,
+    createdAt: String(row.created_at)
   };
 }
 

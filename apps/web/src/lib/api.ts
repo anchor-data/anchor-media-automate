@@ -4,6 +4,7 @@ import type {
   Guideline,
   GuidelineUpsert,
   Idea,
+  ImageAsset,
   Job,
   MemoryItem,
   Post,
@@ -19,7 +20,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
     ...init,
     headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(init?.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
       ...init?.headers
     }
   });
@@ -76,6 +77,22 @@ export async function createReference(accountId: string, body: ReferenceCreate) 
   return request<{ item: Reference; mode: string }>(`/accounts/${accountId}/references`, {
     method: "POST",
     body: JSON.stringify(body)
+  });
+}
+
+export async function uploadReferenceFile(accountId: string, file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return request<{ item: Reference; truncated: boolean; mode: string }>(
+    `/accounts/${accountId}/reference-files`,
+    { method: "POST", body }
+  );
+}
+
+export async function importInstagramReferences(accountId: string, referenceUrl: string, screenshots: string[]) {
+  return request<{ items: Reference[]; mode: string }>(`/accounts/${accountId}/references/from-instagram`, {
+    method: "POST",
+    body: JSON.stringify({ referenceUrl, screenshots })
   });
 }
 
@@ -257,4 +274,47 @@ export async function fetchWorkspaceBundle(accountId?: string): Promise<Dashboar
     ideas: ideasRes.items,
     dataStore: health.dataStore
   };
+}
+
+export async function listImageAssets(accountId: string) {
+  return request<{ items: ImageAsset[]; mode: string }>(`/accounts/${accountId}/image-assets`);
+}
+
+export async function uploadImageAsset(
+  accountId: string,
+  file: File,
+  label: string,
+  description: string,
+  kind: "asset" | "reference"
+) {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("kind", kind);
+  body.append("label", label);
+  body.append("description", description);
+  return request<{ item: ImageAsset; mode: string }>(`/accounts/${accountId}/image-assets`, {
+    method: "POST",
+    body
+  });
+}
+
+export async function deleteImageAsset(assetId: string) {
+  return request<{ ok: boolean }>(`/image-assets/${assetId}`, { method: "DELETE" });
+}
+
+export const imageAssetFileUrl = (assetId: string) => `${API_BASE_URL}/image-assets/${assetId}/file`;
+
+export async function listImageSlots(accountId: string) {
+  return request<{ slots: string[] }>(`/accounts/${accountId}/image-slots`);
+}
+
+export async function getImageStyle(accountId: string) {
+  return request<{ prompt: string }>(`/accounts/${accountId}/image-style`);
+}
+
+export async function saveImageStyle(accountId: string, prompt: string) {
+  return request<{ prompt: string }>(`/accounts/${accountId}/image-style`, {
+    method: "PUT",
+    body: JSON.stringify({ prompt })
+  });
 }

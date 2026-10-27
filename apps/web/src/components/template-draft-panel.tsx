@@ -2,6 +2,7 @@
 
 import { useState, type ChangeEvent } from "react";
 import { createTemplateDraft, type TemplateDraft } from "../lib/api";
+import { readAsDataUrl } from "../lib/read-file";
 
 const MAX_SCREENSHOTS = 10;
 
@@ -9,15 +10,6 @@ interface TemplateDraftPanelProps {
   /** Called after the user says the template is published, so the picker can reload its list. */
   readonly onRefreshTemplates: () => void;
   readonly disabled?: boolean;
-}
-
-function readAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error("画像を読み込めませんでした"));
-    reader.readAsDataURL(file);
-  });
 }
 
 function parseAssetUrls(text: string): string[] {

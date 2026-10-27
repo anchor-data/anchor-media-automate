@@ -44,6 +44,15 @@ describe("toAutofillData", () => {
   });
 });
 
+describe("toAutofillData with images", () => {
+  it("adds image fields that reference Canva asset ids", () => {
+    expect(toAutofillData({ s1_title: "T" }, { s1_image: "asset_1" })).toEqual({
+      s1_title: { type: "text", text: "T" },
+      s1_image: { type: "image", asset_id: "asset_1" }
+    });
+  });
+});
+
 describe("resolveCanvaDesignId", () => {
   it("reads the id from a design url", async () => {
     expect(await resolveCanvaDesignId("https://www.canva.com/design/DAFabc_12-x/edit")).toBe("DAFabc_12-x");
@@ -244,6 +253,62 @@ describe("CanvaApiClient autofill and export", () => {
       title: "Deck",
       data: { s1_title: { type: "text", text: "Hi" } }
     });
+  });
+
+  it("sends image fields alongside text when asset ids are given", async () => {
+    const fetchImpl = routedFetch({
+      ...tokenRoute,
+      "/autofills": () => json({ job: { id: "j1", status: "success", result: { design: { id: "D" } } } })
+    });
+    const client = new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: memoryStore("rt"),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: noSleep
+    });
+    await client.autofill({ templateId: "tpl", fields: { s1_title: "Hi" }, images: { s2_image: "A1" } });
+    const post = fetchImpl.mock.calls.find(([url]) => String(url).endsWith("/autofills"))!;
+    expect(JSON.parse(String(post[1]!.body)).data).toEqual({
+      s1_title: { type: "text", text: "Hi" },
+      s2_image: { type: "image", asset_id: "A1" }
+    });
+  });
+
+  it("uploads an image as a Canva asset and returns its id", async () => {
+    const fetchImpl = routedFetch({
+      ...tokenRoute,
+      "/asset-uploads": () => json({ job: { id: "u1", status: "in_progress" } }),
+      "/asset-uploads/u1": () => json({ job: { id: "u1", status: "success", asset: { id: "ASSET9" } } })
+    });
+    const client = new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: memoryStore("rt"),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: noSleep
+    });
+    const result = await client.uploadAsset({ name: "ロゴ", bytes: new Uint8Array([1, 2, 3]) });
+    expect(result).toEqual({ assetId: "ASSET9" });
+    const post = fetchImpl.mock.calls.find(([url]) => String(url).endsWith("/asset-uploads"))!;
+    const headers = post[1]!.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBe("application/octet-stream");
+    expect(JSON.parse(headers["Asset-Upload-Metadata"]!).name_base64).toBe(btoa(String.fromCharCode(...new TextEncoder().encode("ロゴ"))));
+  });
+
+  it("fails when the upload job finishes without an asset id", async () => {
+    const fetchImpl = routedFetch({
+      ...tokenRoute,
+      "/asset-uploads": () => json({ job: { id: "u1", status: "success" } })
+    });
+    const client = new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: memoryStore("rt"),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: noSleep
+    });
+    await expect(client.uploadAsset({ name: "x", bytes: new Uint8Array([1]) })).rejects.toThrow(/asset id/);
   });
 
   it("surfaces a failed Canva job", async () => {

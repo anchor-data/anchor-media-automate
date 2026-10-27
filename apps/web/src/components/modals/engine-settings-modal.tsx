@@ -1,50 +1,52 @@
 "use client";
 
 import { useState } from "react";
-import { CanvaTemplateSelect } from "../canva-template-select";
-import { canvaTemplateUrl } from "../../lib/canva";
-import { Icon } from "../icon";
+import { ImageLibrary } from "../image-library";
 import { useWorkspace } from "../workspace-context";
 import { SCHEDULE_OPTIONS } from "../../lib/mock-data";
+import { AutomationTab } from "./engine-settings/automation-tab";
+import { BasicTab } from "./engine-settings/basic-tab";
+import { ReferencesTab } from "./engine-settings/references-tab";
 import { Modal } from "./modal";
 
+const TABS = [
+  { id: "basic", label: "基本" },
+  { id: "references", label: "参照ライブラリ" },
+  { id: "images", label: "画像" },
+  { id: "automation", label: "自動生成" }
+] as const;
+type TabId = (typeof TABS)[number]["id"];
+
 export function EngineSettingsModal({ accountId }: { accountId: string }) {
-  const {
-    accounts,
-    closeModal,
-    notify,
-    saveGuideline,
-    references,
-    memoryItems,
-    ideas,
-    addReference,
-    removeReference,
-    removeMemory,
-    saveCanvaTemplate,
-    apiReady
-  } = useWorkspace();
+  const { accounts, closeModal, notify, saveGuideline, saveCanvaTemplate, apiReady } = useWorkspace();
   const account = accounts.find((a) => a.id === accountId);
+  const [tab, setTab] = useState<TabId>("basic");
   const [title, setTitle] = useState(account?.title ?? "");
   const [target, setTarget] = useState(account?.target ?? "");
   const [concept, setConcept] = useState(account?.concept ?? "");
   const [schedule, setSchedule] = useState(account?.schedule ?? SCHEDULE_OPTIONS[0]);
   const [autoRun, setAutoRun] = useState(account?.autoRunEnabled ?? false);
   const [prompt, setPrompt] = useState(account?.systemPrompt ?? "");
-  const [refTitle, setRefTitle] = useState("");
-  const [refBody, setRefBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [templateId, setTemplateId] = useState(account?.canvaTemplateId ?? "");
   const [applyingTemplate, setApplyingTemplate] = useState(false);
 
   if (!account) return null;
 
-  const queued = ideas.filter((i) => i.accountId === accountId && i.status === "queued");
+  function applyTemplate() {
+    if (!account) return;
+    setApplyingTemplate(true);
+    void saveCanvaTemplate(account.id, templateId)
+      .then(() => notify("テンプレートを適用しました"))
+      .catch((error: unknown) => notify(error instanceof Error ? error.message : "テンプレートの適用に失敗しました"))
+      .finally(() => setApplyingTemplate(false));
+  }
 
   return (
     <Modal
       title={`${account.handle} エージェント設定`}
       icon="instagram"
-      width={900}
+      width={720}
       onClose={closeModal}
       footer={
         <>
@@ -79,200 +81,51 @@ export function EngineSettingsModal({ accountId }: { accountId: string }) {
         </>
       }
     >
-      <div className="two-col">
-        <div className="stack gap-16">
-          <div className="tile">
-            <span className="label">ターゲット & コンセプト（ガイドライン）</span>
-            <input
-              className="input"
-              aria-label="アカウント一覧の表示タイトル"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="アカウント一覧の表示タイトル"
-            />
-            <input
-              className="input"
-              aria-label="ターゲット"
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-            />
-            <input
-              className="input"
-              aria-label="コンセプト"
-              value={concept}
-              onChange={(e) => setConcept(e.target.value)}
-            />
-          </div>
-          <div className="tile stack gap-8">
-            <span className="label">参照ライブラリ（人間が追加）</span>
-            <input
-              className="input"
-              placeholder="参照タイトル"
-              value={refTitle}
-              onChange={(e) => setRefTitle(e.target.value)}
-            />
-            <textarea
-              className="textarea"
-              rows={3}
-              placeholder="参考テキスト・構造メモ"
-              value={refBody}
-              onChange={(e) => setRefBody(e.target.value)}
-            />
+      <div className="stack gap-16">
+        <div className="segmented" role="tablist" aria-label="設定セクション">
+          {TABS.map((item) => (
             <button
-              className="btn outline"
+              key={item.id}
               type="button"
-              disabled={!refTitle.trim()}
-              onClick={() => {
-                void addReference(account.id, refTitle.trim(), refBody.trim())
-                  .then(() => {
-                    setRefTitle("");
-                    setRefBody("");
-                    notify("参照を追加しました");
-                  })
-                  .catch((error: unknown) => {
-                    notify(error instanceof Error ? error.message : "参照の追加に失敗");
-                  });
-              }}
+              role="tab"
+              aria-selected={tab === item.id}
+              className={tab === item.id ? "active" : undefined}
+              onClick={() => setTab(item.id)}
             >
-              <Icon name="upload" size={14} />
-              参照を追加
+              {item.label}
             </button>
-            <div className="stack gap-6">
-              {references.length === 0 ? (
-                <span className="muted small">参照はまだありません</span>
-              ) : (
-                references.map((ref) => (
-                  <div className="queue-item" key={ref.id}>
-                    <span className="stack gap-4" style={{ flex: 1 }}>
-                      <strong style={{ fontSize: 12 }}>
-                        [{ref.kind}] {ref.title}
-                      </strong>
-                      <span className="muted small">{ref.examplesText.slice(0, 80)}</span>
-                    </span>
-                    <button
-                      type="button"
-                      className="btn ghost"
-                      aria-label="参照を削除"
-                      onClick={() => {
-                        void removeReference(ref.id).then(() => notify("参照を削除しました"));
-                      }}
-                    >
-                      <Icon name="x" size={14} />
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <div className="tile">
-            <span className="label">メモリーシステム (重複防止)</span>
-            <div className="tags">
-              {memoryItems.length === 0 ? (
-                <span className="muted small">まだ記録がありません</span>
-              ) : (
-                memoryItems.map((m) => (
-                  <button
-                    type="button"
-                    className="tag"
-                    key={m.id}
-                    title="クリックで削除"
-                    onClick={() => {
-                      void removeMemory(m.id).then(() => notify("メモリーを削除しました"));
-                    }}
-                  >
-                    {m.topicKey}
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
+          ))}
         </div>
-        <div className="stack gap-16">
-          <div className="tile">
-            <span className="label">定期実行（アイデア＋コンテンツ自動生成）</span>
-            <label className="row gap-8">
-              <input
-                type="checkbox"
-                role="switch"
-                aria-label="定期実行を有効にする"
-                checked={autoRun}
-                disabled={!apiReady}
-                onChange={(e) => setAutoRun(e.target.checked)}
-              />
-              <span>{autoRun ? "有効" : "無効"}</span>
-            </label>
-            {!apiReady ? <span className="muted small">API未接続のため定期実行は利用できません</span> : null}
-            <select
-              className="select"
-              aria-label="投稿生成スケジュール"
-              value={schedule}
-              disabled={!autoRun}
-              onChange={(e) => setSchedule(e.target.value)}
-            >
-              {SCHEDULE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option.startsWith("毎日") ? `${option} に自動生成` : option}
-                </option>
-              ))}
-            </select>
-          </div>
-          {apiReady ? (
-            <div className="tile stack gap-8">
-              <span className="label">Canvaテンプレート</span>
-              <CanvaTemplateSelect value={templateId} onChange={setTemplateId} disabled={applyingTemplate} />
-              <button
-                className="btn outline"
-                type="button"
-                disabled={applyingTemplate || !templateId || templateId === account.canvaTemplateId}
-                onClick={() => {
-                  setApplyingTemplate(true);
-                  void saveCanvaTemplate(account.id, templateId)
-                    .then(() => notify("テンプレートを適用しました"))
-                    .catch((error: unknown) =>
-                      notify(error instanceof Error ? error.message : "テンプレートの適用に失敗しました")
-                    )
-                    .finally(() => setApplyingTemplate(false));
-                }}
-              >
-                {applyingTemplate ? "検証中…" : "テンプレートを適用"}
-              </button>
-              <span className="muted small">s1_title〜s8_cta の21項目が必要です。不足があると適用できません。</span>
-              {account.canvaTemplateId ? (
-                <a
-                  className="small"
-                  href={canvaTemplateUrl(account.canvaTemplateId)}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Canvaで適用中のテンプレートを開く
-                </a>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="tile">
-            <span className="label">システムプロンプト</span>
-            <textarea
-              className="textarea"
-              rows={5}
-              aria-label="システムプロンプト"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-            />
-          </div>
-          <div className="tile">
-            <span className="label">生成されたアイデアキュー</span>
-            {queued.length === 0 ? (
-              <span className="muted small">キューは空です</span>
-            ) : (
-              queued.map((idea, i) => (
-                <div className="queue-item" key={idea.id}>
-                  {idea.title}
-                  {i === 0 ? <Icon name="check" size={14} /> : null}
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        {tab === "basic" ? (
+          <BasicTab
+            title={title}
+            target={target}
+            concept={concept}
+            prompt={prompt}
+            onTitle={setTitle}
+            onTarget={setTarget}
+            onConcept={setConcept}
+            onPrompt={setPrompt}
+          />
+        ) : null}
+        {tab === "references" ? <ReferencesTab accountId={account.id} /> : null}
+        {tab === "images" ? <ImageLibrary accountId={account.id} notify={notify} /> : null}
+        {tab === "automation" ? (
+          <AutomationTab
+            accountId={account.id}
+            autoRun={autoRun}
+            schedule={schedule}
+            templateId={templateId}
+            applyingTemplate={applyingTemplate}
+            onAutoRun={setAutoRun}
+            onSchedule={setSchedule}
+            onTemplateId={setTemplateId}
+            onApplyTemplate={applyTemplate}
+          />
+        ) : null}
+        {tab === "references" || tab === "images" ? (
+          <span className="muted small">このタブの変更は即時に反映されます（「設定を保存」は不要）。</span>
+        ) : null}
       </div>
     </Modal>
   );

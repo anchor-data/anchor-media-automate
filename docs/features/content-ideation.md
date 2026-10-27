@@ -87,6 +87,7 @@ Each idea includes: title, summary, pillar, topic_key, hook, angle, reference_id
 
 - `POST /accounts/:id/guideline` / `GET` / `PATCH` — human CRUD
 - `GET|POST /accounts/:id/references`, `PATCH|DELETE /references/:id`
+- `POST /accounts/:id/reference-files` (multipart `file`, optional `title`) — `.txt`/`.md` up to 200 KB; text (first 20,000 chars) becomes a `doc` reference the agent reads; the original is kept in R2 (`REFERENCE_FILES`, key `references/:id`) when the bucket is bound
 - `GET|DELETE /accounts/:id/memory[/:memId]`
 - `POST /ideation/run` `{ accountId, count?, seedText?, seedUrl? }` → ideas
 - `GET /accounts/:id/ideas`, `PATCH /ideas/:id`
