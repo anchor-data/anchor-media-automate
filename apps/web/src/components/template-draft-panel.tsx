@@ -10,6 +10,8 @@ interface TemplateDraftPanelProps {
   /** Called after the user says the template is published, so the picker can reload its list. */
   readonly onRefreshTemplates: () => void;
   readonly disabled?: boolean;
+  /** Start expanded (the templates screen) instead of collapsed (inside the add-account modal). */
+  readonly defaultOpen?: boolean;
 }
 
 function parseAssetUrls(text: string): string[] {
@@ -20,7 +22,7 @@ function parseAssetUrls(text: string): string[] {
 }
 
 /** New-account flow: reference Instagram + screenshots + assets → multi-page Canva draft. */
-export function TemplateDraftPanel({ onRefreshTemplates, disabled }: TemplateDraftPanelProps) {
+export function TemplateDraftPanel({ onRefreshTemplates, disabled, defaultOpen }: TemplateDraftPanelProps) {
   const [referenceUrl, setReferenceUrl] = useState("");
   const [assetText, setAssetText] = useState("");
   const [styleNotes, setStyleNotes] = useState("");
@@ -72,7 +74,7 @@ export function TemplateDraftPanel({ onRefreshTemplates, disabled }: TemplateDra
   const canSubmit = referenceUrl.trim().length > 0 && !busy && !disabled;
 
   return (
-    <details className="stack gap-8">
+    <details className="stack gap-8" open={defaultOpen || undefined}>
       <summary className="small">参考アカウントから新しいテンプレートを作成</summary>
       <label className="label" htmlFor="draft-ref">
         参考にするInstagramリンク

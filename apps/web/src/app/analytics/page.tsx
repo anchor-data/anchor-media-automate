@@ -1,5 +1,6 @@
-import { AnalyticsDashboard } from "../../components/analytics-dashboard";
+import { redirect } from "next/navigation";
 
-export default function AnalyticsPage() {
-  return <AnalyticsDashboard />;
+/** Temporarily disabled: the screen component is kept so it can be re-enabled. */
+export default function Page() {
+  redirect("/calendar");
 }

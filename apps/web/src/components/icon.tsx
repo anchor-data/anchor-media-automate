@@ -23,7 +23,16 @@ export type IconName =
   | "eye"
   | "bookmark"
   | "upload"
-  | "search";
+  | "search"
+  | "home"
+  | "bar-chart"
+  | "bell"
+  | "panel-left"
+  | "chevron-left"
+  | "download"
+  | "trash"
+  | "refresh"
+  | "sliders";
 
 const PATHS: Record<IconName, ReactNode> = {
   calendar: (
@@ -126,7 +135,36 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="11" cy="11" r="7" />
       <path d="M21 21l-4.3-4.3" />
     </>
-  )
+  ),
+  home: <path d="M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" />,
+  "bar-chart": <path d="M4 20V4M4 20h16M9 16v-5M14 16V8M19 16v-9" />,
+  bell: (
+    <>
+      <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+      <path d="M10.3 21a1.9 1.9 0 0 0 3.4 0" />
+    </>
+  ),
+  "panel-left": (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="3" />
+      <path d="M9 4v16" />
+    </>
+  ),
+  "chevron-left": <path d="M15 18l-6-6 6-6" />,
+  download: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 10l5 5 5-5M12 15V3" />
+    </>
+  ),
+  trash: <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M6 6l1 14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-14" />,
+  refresh: (
+    <>
+      <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8" />
+      <path d="M21 3v5h-5M3 21v-5h5" />
+    </>
+  ),
+  sliders: <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />
 };
 
 interface IconProps {

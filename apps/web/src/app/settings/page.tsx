@@ -1,5 +1,6 @@
-import { SettingsView } from "../../components/settings-view";
+import { redirect } from "next/navigation";
 
-export default function SettingsPage() {
-  return <SettingsView />;
+/** Temporarily disabled: the screen component is kept so it can be re-enabled. */
+export default function Page() {
+  redirect("/calendar");
 }
