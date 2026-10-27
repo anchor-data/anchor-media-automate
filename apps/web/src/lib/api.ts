@@ -144,6 +144,14 @@ export async function patchIdea(
   });
 }
 
+/** Hashtags are part of the caption text, so the legacy separate list is cleared on every save. */
+export async function patchPostCaption(postId: string, caption: string) {
+  return request<{ item: Post }>(`/posts/${postId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ caption, hashtags: [] })
+  });
+}
+
 export async function approvePost(postId: string) {
   return request<{ item: Post }>(`/posts/${postId}/approve`, { method: "POST" });
 }
