@@ -37,7 +37,7 @@ Optional footer text (handle, page numbers) can be static in the Canva design ra
 
 Add Canva **image** data fields `s1_image` … `s8_image` (one per page, any subset) to let the creation agent place uploaded images (dashboard → Engine settings → 画像ライブラリ). Slots the template does not expose are skipped, so text-only templates keep working.
 
-- Images are uploaded to Canva (`POST /v1/asset-uploads`, scope `asset:write` — **re-run the OAuth bootstrap** so the refresh token carries it) and referenced as `{ "type": "image", "asset_id": "…" }`.
+- Images are uploaded to Canva (`POST /v1/asset-uploads`, scopes `asset:read` + `asset:write` (the upload job is polled via `GET /v1/asset-uploads/:id`) — enable both in the Canva developer portal and **re-run the OAuth bootstrap** so the refresh token carries them) and referenced as `{ "type": "image", "asset_id": "…" }`.
 - Bytes live in the R2 bucket bound as `IMAGE_ASSETS`; the Canva asset id is cached on the `image_assets` row.
 - Run `db setup` to create the `image_assets` table.
 
