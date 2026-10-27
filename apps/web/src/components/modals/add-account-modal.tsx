@@ -57,6 +57,7 @@ export function AddAccountModal() {
         <div className="stack gap-16">
           <div className="tile">
             <span className="label">プラットフォーム連携</span>
+            {/* MOCK: Instagram OAuth is a later phase; this only toggles the badge. */}
             <button className="link-row" onClick={() => setConnected((v) => !v)}>
               <span className="row" style={{ gap: 8 }}>
                 <Icon name="instagram" size={16} />

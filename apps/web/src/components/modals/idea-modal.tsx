@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "../icon";
 import { useWorkspace } from "../workspace-context";
 import type { IdeaCandidate } from "../../lib/mock-data";
@@ -10,6 +11,7 @@ const SAMPLE_TEXT =
   "最近、フロントエンド界隈で話題になっている 'React Server Components' について、社内で議論がありました。\nこの技術のメリットとデメリットを、駆け出しエンジニア向けに分かりやすく解説するカルーセル投稿を作りたいです。";
 
 export function IdeaModal() {
+  const router = useRouter();
   const { closeModal, addDraftFromIdea, notify, generateIdeasFromApi, apiReady } = useWorkspace();
   const [text, setText] = useState(SAMPLE_TEXT);
   const [url, setUrl] = useState("");
@@ -37,9 +39,15 @@ export function IdeaModal() {
               disabled={!selected || busy}
               onClick={() => {
                 if (!selected) return;
-                addDraftFromIdea(selected);
-                notify(apiReady ? "コンテンツの生成を開始しました" : "下書きを作成しました（オフライン）");
-                closeModal();
+                setBusy(true);
+                void addDraftFromIdea(selected)
+                  .then((postId) => {
+                    if (!postId) return;
+                    notify(apiReady ? "コンテンツの生成を開始しました" : "下書きを作成しました（オフライン）");
+                    closeModal();
+                    router.push("/pipeline");
+                  })
+                  .finally(() => setBusy(false));
               }}
             >
               この企画で投稿を生成

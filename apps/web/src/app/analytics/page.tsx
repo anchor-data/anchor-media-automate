@@ -1,5 +1,5 @@
-import { AnalyticsDashboard } from "../../components/analytics-dashboard";
+import { AnalyticsPerformancePage } from "../../components/pages/analytics-performance-page";
 
-export default function AnalyticsPage() {
-  return <AnalyticsDashboard />;
+export default function Page() {
+  return <AnalyticsPerformancePage />;
 }

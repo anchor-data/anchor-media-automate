@@ -10,7 +10,8 @@ import type {
   Post,
   PostAsset,
   Reference,
-  ReferenceCreate
+  ReferenceCreate,
+  SlideFields
 } from "@ama/shared";
 
 const API_BASE_URL = "/api";
@@ -149,6 +150,14 @@ export async function patchPostCaption(postId: string, caption: string) {
   return request<{ item: Post }>(`/posts/${postId}`, {
     method: "PATCH",
     body: JSON.stringify({ caption, hashtags: [] })
+  });
+}
+
+/** Editing slide copy marks the stored images stale; call `renderPost` afterwards to refresh them. */
+export async function patchPostSlides(postId: string, slides: SlideFields) {
+  return request<{ item: Post }>(`/posts/${postId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ slides })
   });
 }
 

@@ -9,7 +9,20 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { DEFAULT_AUTO_RUN_SCHEDULE, autoRunSettingsSchema, captionWithHashtags, type Guideline, Idea, MemoryItem, Post, PostAsset, Reference } from "@ama/shared";
+import {
+  DEFAULT_AUTO_RUN_SCHEDULE,
+  autoRunSettingsSchema,
+  captionWithHashtags,
+  slideFieldsSchema,
+  type Guideline,
+  type GuidelineUpsert,
+  type Idea,
+  type MemoryItem,
+  type Post,
+  type PostAsset,
+  type Reference,
+  type SlideFields
+} from "@ama/shared";
 import {
   approvePost as approvePostApi,
   createAccountApi,
@@ -20,11 +33,13 @@ import {
   uploadReferenceFile,
   importInstagramReferences,
   patchPostCaption,
+  patchPostSlides,
   fetchWorkspaceBundle,
   getGuideline,
   getPostDetail,
   listIdeas,
   listMemory,
+  listPosts,
   listReferences,
   patchIdea,
   putAutoRun,
@@ -42,13 +57,15 @@ import {
   type MockAccount,
   type MockPost
 } from "../lib/mock-data";
+import { defaultScheduleDate, toIsoWithOffset } from "../lib/schedule";
 
-export type ModalState =
-  | { kind: "none" }
-  | { kind: "add-account" }
-  | { kind: "idea" }
-  | { kind: "post-edit"; postId: string }
-  | { kind: "engine"; accountId: string };
+export type ModalState = { kind: "none" } | { kind: "add-account" } | { kind: "idea" };
+
+export interface IdeationInput {
+  readonly seedText?: string;
+  readonly seedUrl?: string;
+  readonly count?: number;
+}
 
 interface WorkspaceValue {
   accounts: readonly MockAccount[];
@@ -61,6 +78,8 @@ interface WorkspaceValue {
   loading: boolean;
   apiReady: boolean;
   dataStore: string | null;
+  /** Which external services the API has credentials for; null while unknown/offline. */
+  integrations: Readonly<Record<string, boolean>> | null;
   guideline: Guideline | null;
   references: readonly Reference[];
   memoryItems: readonly MemoryItem[];
@@ -79,28 +98,30 @@ interface WorkspaceValue {
     canvaTemplateId?: string
   ) => Promise<void>;
   saveCanvaTemplate: (accountId: string, templateId: string) => Promise<void>;
-  updateAccount: (id: string, patch: Partial<MockAccount>) => void;
-  updatePost: (id: string, patch: Partial<MockPost>) => void;
+  /** Turns scheduled idea+content generation on or off for an account. */
+  saveAutoRun: (accountId: string, enabled: boolean, schedule: string) => Promise<void>;
   /** Persists a caption edit (hashtags included in the text) to the API; local-only when offline. */
   savePostCaption: (id: string, caption: string) => Promise<void>;
-  deletePost: (id: string) => void;
-  approvePost: (id: string) => void;
+  /** Persists edited slide copy, then re-renders the Canva images. */
+  savePostSlides: (id: string, slides: SlideFields) => Promise<void>;
+  /** Approves and schedules a draft. Resolves true on success. */
+  approvePost: (id: string, scheduledIso?: string) => Promise<boolean>;
   /** Re-export the stored Canva design (preview URLs expire). */
   reloadPostAssets: (id: string) => Promise<void>;
-  /** Re-run the creation agent for a draft. */
-  retryGeneration: (id: string) => Promise<void>;
-  addDraftFromIdea: (idea: IdeaCandidate) => void;
-  generateIdeasFromApi: (input: {
-    seedText: string;
-    seedUrl?: string;
-  }) => Promise<IdeaCandidate[]>;
-  saveGuideline: (accountId: string, patch: Partial<MockAccount>) => Promise<void>;
+  /** Re-run the creation agent for a draft, optionally with reviewer feedback. */
+  retryGeneration: (id: string, feedback?: string) => Promise<void>;
+  /** Creates content from an idea; resolves to the new post id (null on failure). */
+  addDraftFromIdea: (idea: IdeaCandidate) => Promise<string | null>;
+  rejectIdea: (ideaId: string, reason: string) => Promise<void>;
+  generateIdeasFromApi: (input: IdeationInput) => Promise<IdeaCandidate[]>;
+  saveGuidelineDetails: (accountId: string, body: GuidelineUpsert) => Promise<void>;
   addReference: (accountId: string, title: string, examplesText: string) => Promise<void>;
   uploadReference: (accountId: string, file: File) => Promise<{ truncated: boolean }>;
   importInstagramReference: (accountId: string, referenceUrl: string, screenshots: string[]) => Promise<number>;
   removeReference: (referenceId: string) => Promise<void>;
   removeMemory: (memoryId: string) => Promise<void>;
   refreshAccountSideData: (accountId: string) => Promise<void>;
+  refreshPosts: () => Promise<void>;
   notify: (message: string) => void;
 }
 
@@ -146,20 +167,6 @@ function formatScheduled(iso: string | null | undefined): string | null {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** Tomorrow 18:00 in the browser's zone, as an ISO string with offset (what the API requires). */
-function defaultScheduleIso(): string {
-  const d = new Date();
-  d.setDate(d.getDate() + 1);
-  d.setHours(18, 0, 0, 0);
-  const pad = (n: number) => String(Math.abs(n)).padStart(2, "0");
-  const offsetMin = -d.getTimezoneOffset();
-  const sign = offsetMin >= 0 ? "+" : "-";
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T18:00:00` +
-    `${sign}${pad(Math.floor(Math.abs(offsetMin) / 60))}:${pad(Math.abs(offsetMin) % 60)}`
-  );
-}
-
 function assetUrlsOf(assets: readonly PostAsset[]): readonly string[] {
   return [...assets].sort((a, b) => (a.slideIndex ?? 0) - (b.slideIndex ?? 0)).map((a) => a.imageUrl);
 }
@@ -173,6 +180,8 @@ function errorText(error: unknown): string {
 }
 
 function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[]): MockPost {
+  const slides = slideFieldsSchema.safeParse(post.slidesJson);
+  const dateIso = post.scheduledAt ?? post.createdAt;
   return {
     id: post.id,
     accountId: post.accountId,
@@ -185,15 +194,26 @@ function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[
         : post.status === "rejected" || post.status === "failed"
           ? "draft"
           : (post.status as MockPost["status"]),
-    day: dayFromIso(post.scheduledAt ?? post.createdAt),
+    rawStatus: post.status,
+    day: dayFromIso(dateIso),
+    dateIso,
+    createdAt: post.createdAt,
+    updatedAt: post.updatedAt,
     scheduledAt: formatScheduled(post.scheduledAt),
     ideaTarget,
     ideaId: post.ideaId,
     generationStatus: post.generationStatus,
     generationError: post.generationError ?? null,
     assetUrls: assets ? assetUrlsOf(assets) : undefined,
-    canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined
+    canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined,
+    slides: slides.success ? slides.data : undefined
   };
+}
+
+/** Keeps already-loaded slide images when a list refresh replaces the post. */
+function mergeLoaded(next: MockPost, previous: MockPost | undefined): MockPost {
+  if (!previous?.assetUrls) return next;
+  return { ...next, assetUrls: previous.assetUrls, canvaDesignId: previous.canvaDesignId };
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -207,6 +227,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [apiReady, setApiReady] = useState(false);
   const [dataStore, setDataStore] = useState<string | null>(null);
+  const [integrations, setIntegrations] = useState<Readonly<Record<string, boolean>> | null>(null);
   const [guideline, setGuideline] = useState<Guideline | null>(null);
   const [references, setReferences] = useState<readonly Reference[]>([]);
   const [memoryItems, setMemoryItems] = useState<readonly MemoryItem[]>([]);
@@ -228,7 +249,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setReferences(refs.items);
     setMemoryItems(mem.items);
     setIdeas(ideaList.items);
-    if (guideItem) setGuideline(guideItem);
+    setGuideline(guideItem);
     setAccounts((prev) =>
       prev.map((a) =>
         a.id === accountId
@@ -241,6 +262,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const refreshPosts = useCallback(async () => {
+    const res = await listPosts();
+    setPosts((prev) =>
+      res.items.map((post) => {
+        const before = prev.find((p) => p.id === post.id);
+        return mergeLoaded(mapApiPost(post, before?.ideaTarget ?? ""), before);
+      })
+    );
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -249,23 +280,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const bundle = await fetchWorkspaceBundle();
         if (cancelled) return;
         setDataStore(bundle.dataStore);
+        setIntegrations(bundle.health.integrations);
         setGuideline(bundle.guideline);
         setReferences(bundle.references);
         setMemoryItems(bundle.memory);
         setIdeas(bundle.ideas);
         setApiReady(true);
 
+        const firstId = bundle.accounts[0]?.id ?? "";
         const mappedAccounts =
           bundle.accounts.length > 0
             ? bundle.accounts.map((acc) => ({
                 ...mapAccount(
                   acc.id,
-                  acc.instagramHandle.startsWith("@")
-                    ? acc.instagramHandle
-                    : `@${acc.instagramHandle}`,
-                  acc.id === (bundle.accounts[0]?.id ?? "") ? bundle.guideline : null,
-                  acc.id === (bundle.accounts[0]?.id ?? "") ? bundle.memory : [],
-                  acc.id === (bundle.accounts[0]?.id ?? "") ? bundle.ideas : [],
+                  acc.instagramHandle.startsWith("@") ? acc.instagramHandle : `@${acc.instagramHandle}`,
+                  acc.id === firstId ? bundle.guideline : null,
+                  acc.id === firstId ? bundle.memory : [],
+                  acc.id === firstId ? bundle.ideas : [],
                   INITIAL_ACCOUNTS.find((a) => a.id === acc.id)
                 ),
                 canvaTemplateId: acc.canvaTemplateId,
@@ -275,13 +306,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             : INITIAL_ACCOUNTS;
 
         setAccounts(mappedAccounts);
-        const firstId = mappedAccounts[0]?.id ?? "";
-        setActiveAccountId(firstId);
-
-        if (cancelled) return;
-        setPosts(
-          bundle.posts.map((post) => mapApiPost(post, bundle.guideline?.target ?? ""))
-        );
+        setActiveAccountId(mappedAccounts[0]?.id ?? "");
+        setPosts(bundle.posts.map((post) => mapApiPost(post, bundle.guideline?.target ?? "")));
       } catch {
         if (!cancelled) {
           setApiReady(false);
@@ -342,8 +368,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       .catch((error: unknown) => notify(`プレビューの読み込みに失敗しました: ${errorText(error)}`));
   }, [apiReady, selectedPostId, posts, notify]);
 
-  const value = useMemo<WorkspaceValue>(
-    () => ({
+  const value = useMemo<WorkspaceValue>(() => {
+    const replacePost = (id: string, next: (p: MockPost) => MockPost) =>
+      setPosts((prev) => prev.map((p) => (p.id === id ? next(p) : p)));
+
+    const targetOf = () => accounts.find((a) => a.id === activeAccountId)?.target ?? "";
+
+    return {
       accounts,
       posts,
       activeAccountId,
@@ -354,6 +385,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       loading,
       apiReady,
       dataStore,
+      integrations,
       guideline,
       references,
       memoryItems,
@@ -377,6 +409,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       closeModal: () => setModal({ kind: "none" }),
       notify,
       refreshAccountSideData,
+      refreshPosts,
       addAccount: async (handle, schedule, target, concept, title, canvaTemplateId) => {
         const clean = handle.trim().replace(/^@?/, "@");
         const label = title?.trim() || concept.trim() || target.trim() || "新規アカウント";
@@ -426,118 +459,125 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           prev.map((a) => (a.id === accountId ? { ...a, canvaTemplateId: templateId } : a))
         );
       },
-      updateAccount: (id, patch) =>
-        setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a))),
-      updatePost: (id, patch) =>
-        setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p))),
+      saveAutoRun: async (accountId, enabled, schedule) => {
+        const settings = autoRunSettingsSchema.parse({ enabled, schedule });
+        if (apiReady) await putAutoRun(accountId, settings);
+        setAccounts((prev) =>
+          prev.map((a) => (a.id === accountId ? { ...a, autoRunEnabled: enabled, schedule } : a))
+        );
+      },
       savePostCaption: async (id, caption) => {
         if (apiReady) {
           const { item } = await patchPostCaption(id, caption);
-          setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, caption: item.caption } : p)));
+          replacePost(id, (p) => ({ ...p, caption: item.caption }));
           return;
         }
-        setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, caption } : p)));
+        replacePost(id, (p) => ({ ...p, caption }));
       },
-      deletePost: (id) => {
-        setPosts((prev) => prev.filter((p) => p.id !== id));
-        setSelectedPostId((current) => (current === id ? null : current));
-      },
-      approvePost: (id) => {
+      savePostSlides: async (id, slides) => {
         if (!apiReady) {
-          setPosts((prev) =>
-            prev.map((p) =>
-              p.id === id
-                ? { ...p, status: "scheduled", scheduledAt: p.scheduledAt ?? "2026/02/21 18:00" }
-                : p
-            )
-          );
-          notify("承認して予約しました");
+          replacePost(id, (p) => ({ ...p, slides }));
           return;
         }
-        void approvePostApi(id)
-          .then(() => schedulePost(id, defaultScheduleIso()))
-          .then((res) => {
-            setPosts((prev) =>
-              prev.map((p) =>
-                p.id === id
-                  ? { ...p, status: "scheduled", scheduledAt: formatScheduled(res.item.scheduledAt) }
-                  : p
-              )
-            );
-            notify("承認して予約しました");
-          })
-          .catch((error: unknown) => notify(`承認に失敗しました: ${errorText(error)}`));
+        await patchPostSlides(id, slides);
+        const detail = await renderPost(id, false);
+        replacePost(id, (p) => mapApiPost(detail.post, p.ideaTarget, detail.assets));
+      },
+      approvePost: async (id, scheduledIso) => {
+        const iso = scheduledIso ?? toIsoWithOffset(defaultScheduleDate());
+        if (!apiReady) {
+          replacePost(id, (p) => ({
+            ...p,
+            status: "scheduled",
+            rawStatus: "scheduled",
+            dateIso: iso,
+            scheduledAt: formatScheduled(iso)
+          }));
+          notify("承認して予約しました");
+          return true;
+        }
+        try {
+          await approvePostApi(id);
+          const res = await schedulePost(id, iso);
+          replacePost(id, (p) => ({
+            ...p,
+            status: "scheduled",
+            rawStatus: "scheduled",
+            dateIso: res.item.scheduledAt ?? iso,
+            scheduledAt: formatScheduled(res.item.scheduledAt)
+          }));
+          notify("承認して予約しました");
+          return true;
+        } catch (error) {
+          notify(`承認に失敗しました: ${errorText(error)}`);
+          return false;
+        }
       },
       reloadPostAssets: async (id) => {
         try {
           const detail = await renderPost(id, true);
-          setPosts((prev) =>
-            prev.map((p) => (p.id === id ? mapApiPost(detail.post, p.ideaTarget, detail.assets) : p))
-          );
+          replacePost(id, (p) => mapApiPost(detail.post, p.ideaTarget, detail.assets));
         } catch (error) {
           notify(`プレビューの更新に失敗しました: ${errorText(error)}`);
         }
       },
-      retryGeneration: async (id) => {
+      retryGeneration: async (id, feedback) => {
         try {
-          const { item } = await regeneratePost(id);
-          setPosts((prev) =>
-            prev.map((p) =>
-              p.id === id ? { ...mapApiPost(item, p.ideaTarget), assetUrls: undefined } : p
-            )
-          );
+          const { item } = await regeneratePost(id, feedback);
+          replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: undefined }));
         } catch (error) {
           notify(`再生成に失敗しました: ${errorText(error)}`);
         }
       },
-      addDraftFromIdea: (idea) => {
-        const target = accounts.find((a) => a.id === activeAccountId)?.target ?? "";
+      addDraftFromIdea: async (idea) => {
+        const target = targetOf();
+        const markSelected = () =>
+          setIdeas((prev) => prev.map((i) => (i.id === idea.id ? { ...i, status: "selected" } : i)));
+
         if (apiReady) {
-          void createContent(idea.id)
-            .then(({ item }) => {
-              setPosts((prev) => [...prev, mapApiPost(item, target)]);
-              setSelectedIdeaId(null);
-              setSelectedPostId(item.id);
-              setIdeas((prev) =>
-                prev.map((i) => (i.id === idea.id ? { ...i, status: "selected" } : i))
-              );
-            })
-            .catch((error: unknown) => notify(`コンテンツの作成に失敗しました: ${errorText(error)}`));
-          return;
+          try {
+            const { item } = await createContent(idea.id);
+            setPosts((prev) => [...prev, mapApiPost(item, target)]);
+            markSelected();
+            return item.id;
+          } catch (error) {
+            notify(`コンテンツの作成に失敗しました: ${errorText(error)}`);
+            return null;
+          }
         }
         const id = `post_${Date.now()}`;
+        const now = new Date().toISOString();
         const draft: MockPost = {
           id,
           accountId: activeAccountId,
           title: idea.title,
           caption: idea.summary,
           status: "draft",
+          rawStatus: "draft",
           day: new Date().getDate(),
+          dateIso: now,
+          createdAt: now,
           scheduledAt: null,
-          ideaTarget: accounts.find((a) => a.id === activeAccountId)?.target ?? "",
+          ideaTarget: target,
           ideaId: idea.id
         };
         setPosts((prev) => [...prev, draft]);
-        setSelectedIdeaId(null);
-        setSelectedPostId(id);
-        setIdeas((prev) =>
-          prev.map((item) => (item.id === idea.id ? { ...item, status: "selected" } : item))
-        );
-        if (apiReady) {
-          void patchIdea(idea.id, { status: "selected" })
-            .then((updated) => {
-              setIdeas((prev) =>
-                prev.map((item) => (item.id === idea.id ? updated.item : item))
-              );
-            })
-            .catch(() => null);
-        }
+        markSelected();
+        return id;
       },
-      generateIdeasFromApi: async ({ seedText, seedUrl }) => {
+      rejectIdea: async (ideaId, reason) => {
+        if (apiReady) {
+          const { item } = await patchIdea(ideaId, { status: "rejected", rejectReason: reason });
+          setIdeas((prev) => prev.map((i) => (i.id === ideaId ? item : i)));
+          return;
+        }
+        setIdeas((prev) => prev.map((i) => (i.id === ideaId ? { ...i, status: "rejected" } : i)));
+      },
+      generateIdeasFromApi: async ({ seedText, seedUrl, count = 3 }) => {
         const result = await runIdeation({
           accountId: activeAccountId,
-          count: 3,
-          seedText,
+          count,
+          seedText: seedText?.trim() || undefined,
           seedUrl: seedUrl || undefined
         });
         const stored = await listIdeas(activeAccountId);
@@ -552,41 +592,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             a.id === activeAccountId
               ? {
                   ...a,
-                  ideaQueue: stored.items
-                    .filter((idea) => idea.status === "queued")
-                    .map((idea) => idea.title)
+                  ideaQueue: stored.items.filter((idea) => idea.status === "queued").map((idea) => idea.title)
                 }
               : a
           )
         );
-        return result.items.map((i) => ({
-          id: i.id,
-          title: i.title,
-          summary: i.summary
-        }));
+        return result.items.map((i) => ({ id: i.id, title: i.title, summary: i.summary }));
       },
-      saveGuideline: async (accountId, patch) => {
-        setAccounts((prev) => prev.map((a) => (a.id === accountId ? { ...a, ...patch } : a)));
-        if (!apiReady) return;
-        const account = accounts.find((a) => a.id === accountId);
-        const merged = { ...account, ...patch };
-        const item = await putGuideline(accountId, {
-          target: merged?.target ?? "",
-          concept: merged?.concept ?? "",
-          tone: guideline?.tone ?? "やさしく実践的",
-          contentPillars: guideline?.contentPillars ?? ["転職準備"],
-          ngRules: guideline?.ngRules ?? [],
-          ctaPolicy: guideline?.ctaPolicy ?? "",
-          hashtagPolicy: guideline?.hashtagPolicy ?? "",
-          jobPickEnabled: guideline?.jobPickEnabled ?? false,
-          systemPrompt: merged?.systemPrompt ?? DEFAULT_PROMPT
-        });
-        setGuideline(item.item);
-        const settings = autoRunSettingsSchema.safeParse({
-          enabled: merged.autoRunEnabled ?? false,
-          schedule: merged.schedule
-        });
-        if (settings.success) await putAutoRun(accountId, settings.data);
+      saveGuidelineDetails: async (accountId, body) => {
+        const { item } = await putGuideline(accountId, body);
+        setGuideline(item);
+        setAccounts((prev) =>
+          prev.map((a) =>
+            a.id === accountId
+              ? { ...a, target: item.target, concept: item.concept, systemPrompt: item.systemPrompt }
+              : a
+          )
+        );
       },
       addReference: async (accountId, title, examplesText) => {
         if (!apiReady) {
@@ -624,36 +646,32 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setAccounts((prev) =>
           prev.map((a) =>
             a.id === activeAccountId
-              ? {
-                  ...a,
-                  memory: memoryItems
-                    .filter((m) => m.id !== memoryId)
-                    .map((m) => m.topicKey)
-                }
+              ? { ...a, memory: memoryItems.filter((m) => m.id !== memoryId).map((m) => m.topicKey) }
               : a
           )
         );
       }
-    }),
-    [
-      accounts,
-      posts,
-      activeAccountId,
-      selectedPostId,
-      selectedIdeaId,
-      modal,
-      toast,
-      loading,
-      apiReady,
-      dataStore,
-      guideline,
-      references,
-      memoryItems,
-      ideas,
-      notify,
-      refreshAccountSideData
-    ]
-  );
+    };
+  }, [
+    accounts,
+    posts,
+    activeAccountId,
+    selectedPostId,
+    selectedIdeaId,
+    modal,
+    toast,
+    loading,
+    apiReady,
+    dataStore,
+    integrations,
+    guideline,
+    references,
+    memoryItems,
+    ideas,
+    notify,
+    refreshAccountSideData,
+    refreshPosts
+  ]);
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
