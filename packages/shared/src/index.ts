@@ -385,3 +385,21 @@ export function isAutoRunDue(schedule: string, now: Date, lastRunAt: string | nu
   const last = new Date(lastRunAt);
   return Number.isNaN(last.getTime()) || last.getTime() < jstHourStart(now);
 }
+
+/**
+ * The caption as posted: hashtags live inside the caption text, not in a separate field.
+ * Tags the caption already contains are not repeated.
+ */
+export function captionWithHashtags(caption: string, hashtags: readonly string[]): string {
+  const body = caption.trim();
+  const missing = [
+    ...new Set(
+      hashtags
+        .map((tag) => tag.trim().replace(/^[#＃]+/, ""))
+        .filter((tag) => tag.length > 0)
+        .map((tag) => `#${tag}`)
+    )
+  ].filter((tag) => !body.includes(tag));
+  if (missing.length === 0) return body;
+  return body ? `${body}\n\n${missing.join(" ")}` : missing.join(" ");
+}

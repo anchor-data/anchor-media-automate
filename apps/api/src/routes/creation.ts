@@ -7,7 +7,7 @@ import {
   type CreationToolContext
 } from "@ama/integrations";
 import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
-import { slideFieldsSchema, slideImagesFrom } from "@ama/shared";
+import { captionWithHashtags, slideFieldsSchema, slideImagesFrom } from "@ama/shared";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
 import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
@@ -50,8 +50,9 @@ export async function generatePost(
       output.deck
     );
     const post = await repo.updatePost(postId, {
-      caption: output.deck.caption,
-      hashtags: output.deck.hashtags,
+      // Hashtags live inside the caption text; the separate list stays empty so there is one source of truth.
+      caption: captionWithHashtags(output.deck.caption, output.deck.hashtags),
+      hashtags: [],
       slidesJson: { ...output.deck.slides, images },
       postType: output.deck.postType
     });

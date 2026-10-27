@@ -8,10 +8,11 @@ import { STATUS_LABEL } from "../../lib/mock-data";
 import { Modal } from "./modal";
 
 export function PostEditModal({ postId }: { postId: string }) {
-  const { posts, accounts, closeModal, updatePost, deletePost, notify } = useWorkspace();
+  const { posts, accounts, closeModal, updatePost, savePostCaption, deletePost, notify } = useWorkspace();
   const post = posts.find((p) => p.id === postId);
   const [caption, setCaption] = useState(post?.caption ?? "");
   const [scheduledAt, setScheduledAt] = useState(post?.scheduledAt ?? "");
+  const [saving, setSaving] = useState(false);
 
   if (!post) return null;
   const handle = accounts.find((a) => a.id === post.accountId)?.handle ?? "";
@@ -38,13 +39,20 @@ export function PostEditModal({ postId }: { postId: string }) {
           </button>
           <button
             className="btn primary"
+            disabled={saving}
             onClick={() => {
-              updatePost(post.id, { caption, scheduledAt: scheduledAt.trim() || null });
-              notify("変更を保存しました");
-              closeModal();
+              setSaving(true);
+              updatePost(post.id, { scheduledAt: scheduledAt.trim() || null });
+              void savePostCaption(post.id, caption)
+                .then(() => {
+                  notify("変更を保存しました");
+                  closeModal();
+                })
+                .catch((error: unknown) => notify(error instanceof Error ? error.message : "保存に失敗しました"))
+                .finally(() => setSaving(false));
             }}
           >
-            変更を保存
+            {saving ? "保存中…" : "変更を保存"}
           </button>
         </>
       }
@@ -66,7 +74,7 @@ export function PostEditModal({ postId }: { postId: string }) {
           </div>
           <div className="stack gap-8">
             <label className="label" htmlFor="edit-caption">
-              キャプション
+              キャプション（ハッシュタグも本文に入れる）
             </label>
             <textarea
               id="edit-caption"

@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode
 } from "react";
-import { DEFAULT_AUTO_RUN_SCHEDULE, autoRunSettingsSchema, type Guideline, Idea, MemoryItem, Post, PostAsset, Reference } from "@ama/shared";
+import { DEFAULT_AUTO_RUN_SCHEDULE, autoRunSettingsSchema, captionWithHashtags, type Guideline, Idea, MemoryItem, Post, PostAsset, Reference } from "@ama/shared";
 import {
   approvePost as approvePostApi,
   createAccountApi,
@@ -19,6 +19,7 @@ import {
   deleteReference,
   uploadReferenceFile,
   importInstagramReferences,
+  patchPostCaption,
   fetchWorkspaceBundle,
   getGuideline,
   getPostDetail,
@@ -80,6 +81,8 @@ interface WorkspaceValue {
   saveCanvaTemplate: (accountId: string, templateId: string) => Promise<void>;
   updateAccount: (id: string, patch: Partial<MockAccount>) => void;
   updatePost: (id: string, patch: Partial<MockPost>) => void;
+  /** Persists a caption edit (hashtags included in the text) to the API; local-only when offline. */
+  savePostCaption: (id: string, caption: string) => Promise<void>;
   deletePost: (id: string) => void;
   approvePost: (id: string) => void;
   /** Re-export the stored Canva design (preview URLs expire). */
@@ -174,7 +177,8 @@ function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[
     id: post.id,
     accountId: post.accountId,
     title: post.title,
-    caption: post.caption,
+    // Older posts kept hashtags in a separate list; show them inside the caption text.
+    caption: captionWithHashtags(post.caption, post.hashtags ?? []),
     status:
       post.status === "approved"
         ? "scheduled"
@@ -426,6 +430,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a))),
       updatePost: (id, patch) =>
         setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p))),
+      savePostCaption: async (id, caption) => {
+        if (apiReady) {
+          const { item } = await patchPostCaption(id, caption);
+          setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, caption: item.caption } : p)));
+          return;
+        }
+        setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, caption } : p)));
+      },
       deletePost: (id) => {
         setPosts((prev) => prev.filter((p) => p.id !== id));
         setSelectedPostId((current) => (current === id ? null : current));
