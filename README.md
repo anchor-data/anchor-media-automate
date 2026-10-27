@@ -1,4 +1,4 @@
-# Instagram求人メディア自動化ダッシュボード (v0 scaffold)
+# Instagram 求人メディア自動化ダッシュボード (v0 scaffold)
 
 This repository contains a greenfield scaffold for:
 
@@ -9,6 +9,7 @@ This repository contains a greenfield scaffold for:
 - Shared API/domain types (`packages/shared`)
 
 No auth is included in v0.
+Design: https://app.paper.design/file/01M5YW2D2RJBNJBQWEV0H6JCBJ/p-1-0
 
 ## Project structure
 
