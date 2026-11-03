@@ -52,6 +52,8 @@ export interface Repository {
   getAccount(accountId: string): Promise<Account | null>;
   listAccounts(): Promise<Account[]>;
   createAccount(account: Account): Promise<Account>;
+  /** Delete an account with everything that belongs to it (posts, ideas, guideline, references, assets, memory, runs). */
+  deleteAccount(accountId: string): Promise<boolean>;
   updateAccountAutoRun(accountId: string, settings: AutoRunSettings): Promise<Account | null>;
   updateAccountImageStyle(accountId: string, imageStylePrompt: string): Promise<Account | null>;
   updateAccountDesign(accountId: string, design: AccountDesign): Promise<Account | null>;
@@ -202,6 +204,20 @@ class MockRepository implements Repository {
   }
   async markAutoRun(accountId: string, at: string) {
     this.accounts = this.accounts.map((a) => (a.id === accountId ? { ...a, lastAutoRunAt: at } : a));
+  }
+  async deleteAccount(accountId: string) {
+    if (!this.accounts.some((a) => a.id === accountId)) return false;
+    const postIds = new Set(this.posts.filter((p) => p.accountId === accountId).map((p) => p.id));
+    this.accounts = this.accounts.filter((a) => a.id !== accountId);
+    this.posts = this.posts.filter((p) => !postIds.has(p.id));
+    this.assets = this.assets.filter((a) => !postIds.has(a.postId));
+    this.agentRuns = this.agentRuns.filter((r) => r.accountId !== accountId);
+    this.guidelines = this.guidelines.filter((g) => g.accountId !== accountId);
+    this.references = this.references.filter((r) => r.accountId !== accountId);
+    this.memory = this.memory.filter((m) => m.accountId !== accountId);
+    this.ideas = this.ideas.filter((i) => i.accountId !== accountId);
+    this.imageAssets = this.imageAssets.filter((i) => i.accountId !== accountId);
+    return true;
   }
   async createAccount(account: Account) {
     if (this.accounts.some((a) => a.id === account.id)) {
@@ -590,6 +606,27 @@ class TursoRepository implements Repository {
       sql: "UPDATE accounts SET last_auto_run_at = ? WHERE id = ?",
       args: [at, accountId]
     });
+  }
+
+  async deleteAccount(accountId: string) {
+    if (!(await this.getAccount(accountId))) return false;
+    const byPost = "SELECT id FROM posts WHERE account_id = ?";
+    await this.client.batch(
+      [
+        { sql: `DELETE FROM post_assets WHERE post_id IN (${byPost})`, args: [accountId] },
+        { sql: `DELETE FROM post_insights WHERE post_id IN (${byPost})`, args: [accountId] },
+        { sql: "DELETE FROM agent_runs WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM posts WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM ideas WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM memory_items WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM content_references WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM image_assets WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM guidelines WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM accounts WHERE id = ?", args: [accountId] }
+      ],
+      "write"
+    );
+    return true;
   }
 
   async createAccount(account: Account) {

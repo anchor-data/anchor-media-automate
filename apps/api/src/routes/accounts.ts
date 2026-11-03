@@ -11,6 +11,7 @@ import type { Account, AccountDesign } from "@ama/shared";
 import { accountDesignSchema, autoRunSettingsSchema, deckStructureSchema } from "@ama/shared";
 import { z } from "zod";
 import { createRepo, type Bindings } from "../lib/env";
+import { imageAssetKey } from "../lib/image-assets";
 
 export const accountRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -26,6 +27,16 @@ accountRoutes.post("/accounts", async (c) => {
   const repo = createRepo(c.env);
   const account: Account = { id: `acc_${crypto.randomUUID()}`, ...parsed.data };
   return c.json({ item: await repo.createAccount(account), mode: repo.mode }, 201);
+});
+
+/** Delete an account and everything that belongs to it. Uploaded image files are removed from R2 too. */
+accountRoutes.delete("/accounts/:id", async (c) => {
+  const repo = createRepo(c.env);
+  const id = c.req.param("id");
+  const images = await repo.listImageAssets(id, ["asset", "reference", "generated"]);
+  if (!(await repo.deleteAccount(id))) return c.json({ error: "Account not found" }, 404);
+  await Promise.all(images.map((image) => c.env.IMAGE_ASSETS?.delete(imageAssetKey(image.id))));
+  return c.json({ ok: true });
 });
 
 /** Enable/disable the periodic ideation + content run and pick its schedule. */

@@ -28,6 +28,7 @@ import {
 import {
   approvePost as approvePostApi,
   createAccountApi,
+  deleteAccountApi,
   createContent,
   createReference,
   deleteMemory,
@@ -91,6 +92,7 @@ interface WorkspaceValue {
   selectIdea: (id: string | null) => void;
   openModal: (modal: ModalState) => void;
   closeModal: () => void;
+  removeAccount: (accountId: string) => Promise<void>;
   addAccount: (
     handle: string,
     schedule: string,
@@ -454,6 +456,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setSelectedPostId(null);
         setSelectedIdeaId(null);
         return id;
+      },
+      removeAccount: async (accountId) => {
+        if (apiReady) await deleteAccountApi(accountId);
+        const remaining = accounts.filter((a) => a.id !== accountId);
+        setAccounts(remaining);
+        if (activeAccountId === accountId) setActiveAccountId(remaining[0]?.id ?? "");
+        setSelectedPostId(null);
+        setSelectedIdeaId(null);
       },
       setAccountStructure: (accountId, structure) =>
         setAccounts((prev) => prev.map((a) => (a.id === accountId ? { ...a, structure } : a))),

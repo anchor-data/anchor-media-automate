@@ -66,17 +66,10 @@ export const NAV_SECTIONS: readonly NavSection[] = [
   },
   {
     id: "settings",
-    disabled: true,
     label: "設定",
     icon: "sliders",
     heading: "設定",
-    items: [
-      { href: "/settings/members", label: "メンバーと権限" },
-      { href: "/settings/approval", label: "承認ルール" },
-      { href: "/settings/integrations", label: "外部サービス連携" },
-      { href: "/settings/notifications", label: "通知" },
-      { href: "/settings/billing", label: "請求とプラン" }
-    ]
+    items: [{ href: "/settings/account", label: "アカウント" }]
   }
 ];
 

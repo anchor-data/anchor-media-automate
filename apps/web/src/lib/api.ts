@@ -176,6 +176,10 @@ export async function createAccountApi(body: {
   return request<{ item: Account }>("/accounts", { method: "POST", body: JSON.stringify(body) });
 }
 
+export async function deleteAccountApi(accountId: string) {
+  return request<{ ok: true }>(`/accounts/${accountId}`, { method: "DELETE" });
+}
+
 export async function putAutoRun(accountId: string, body: AutoRunSettings) {
   return request<{ item: Account }>(`/accounts/${accountId}/auto-run`, {
     method: "PUT",
