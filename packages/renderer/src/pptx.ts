@@ -1,5 +1,6 @@
 import PptxGenJS from "pptxgenjs";
 import { layoutSlide, SLIDE_HEIGHT, SLIDE_WIDTH, type Box, type LayoutEl, type SlideFieldsLike } from "./layout";
+import { fitContain, readImageSize } from "./image-size";
 import type { DesignSpec } from "./spec";
 
 export const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -37,8 +38,8 @@ function draw(pptx: PptxGenJS, slide: Slide, spec: DesignSpec, el: LayoutEl): vo
     return;
   }
   if (el.type === "image") {
-    const size = inches(el.box);
-    slide.addImage({ data: el.src.replace(/^data:/, ""), ...size, sizing: { type: "cover", w: size.w, h: size.h } });
+    // The whole image, centered in its box (mascots and logos must never be cropped).
+    slide.addImage({ data: el.src.replace(/^data:/, ""), ...inches(fitContain(readImageSize(el.src), el.box)) });
     return;
   }
   slide.addText(el.text, {
@@ -48,7 +49,7 @@ function draw(pptx: PptxGenJS, slide: Slide, spec: DesignSpec, el: LayoutEl): vo
     bold: el.weight >= 700,
     color: hex(el.color),
     align: el.align,
-    valign: "middle",
+    valign: el.valign ?? "middle",
     margin: 0,
     ...(el.underline ? { underline: { style: "sng" as const } } : {}),
     ...(el.fill

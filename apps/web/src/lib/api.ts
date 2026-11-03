@@ -215,6 +215,8 @@ export type AccountDesignView = {
   referenceNote: string;
   summary: string;
   updatedAt: string | null;
+  /** What deriving the design cost (USD). */
+  analysisCostUsd: number;
   hasDesign: boolean;
 };
 

@@ -1,4 +1,4 @@
-import { AUTO_RUN_SCHEDULES, type GenerationStatus, type PostStatus as ApiPostStatus, type SlideFields } from "@ama/shared";
+import { AUTO_RUN_SCHEDULES, type GenerationStatus, type PostCost, type PostStatus as ApiPostStatus, type SlideFields } from "@ama/shared";
 
 export type PostStatus = "draft" | "scheduled" | "published";
 
@@ -27,6 +27,8 @@ export interface MockPost {
   readonly canvaDesignId?: string;
   /** Slide copy the agent produced; undefined for offline drafts. */
   readonly slides?: SlideFields;
+  /** Measured generation cost (USD) by step; all zero when nothing was measured. */
+  readonly costUsd?: PostCost;
 }
 
 export interface MockAccount {

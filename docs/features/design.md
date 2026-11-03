@@ -16,8 +16,19 @@ How a post gets its look, without anyone building Canva templates.
 - `accounts.design_json`: `{ spec, guideline, referenceNote, summary, updatedAt }`.
 - `posts.slides_json.design` / `.designPrompt`: the design a post was rendered with and the last prompt.
 
+## Structure and images
+
+- `layout.structure` arranges the content pages: `classic` (number, heading pill, text stacked), `split` (number column + accent rule on the left, heading and text on the right) or `banner` (heading in a colored band on top). With `variety: lively` a post may also switch structure (30% of posts).
+- Every page is described once as a flat list of elements (`layoutSlide`); the HTML preview and the PPTX for Canva are both drawn from it, so they match. Text is wrapped at word boundaries by our own code before it is drawn.
+- A page with an image (an uploaded asset or an AI illustration chosen by the creation agent) gets an image layout. The whole image is shown (never cropped), centered in its box. Uploaded assets come from R2; AI illustrations use the account's image style prompt (model `gpt-image-1-mini`).
+
+## Cost tracking
+
+Costs are measured from the models' token usage, not estimated: `slides_json.costUsd { copy, images, design }` per post (a regeneration adds to it) and `accounts.design_json.analysisCostUsd` for deriving a design. The editor shows the per-post total.
+
+Measured on the local stack: deriving a design from 3 screenshots about $0.008; copy for one post $0.024-0.032; one AI illustration about $0.034 (it was generated from reference images); rendering and Canva cost nothing.
+
 ## Limits
 
 - Canva stores two font weights from a PPTX (normal/bold), so weights 300-900 collapse to two steps there. The HTML preview shows all nine.
-- Uploaded assets and AI illustrations are not placed on slides yet (the new layouts have no image slots).
-- Layout structure (cover / empathy / point / pick / CTA) is fixed in code; the design controls style, not structure.
+- The page types (cover / empathy / point / pick / CTA) are fixed in code; the design chooses among a few arrangements of the content pages.

@@ -49,6 +49,13 @@ describe("varySpec", () => {
     expect(new Set(specs.map((s) => s.layout.decor)).size).toBeGreaterThan(1);
   });
 
+  it("lively may also change the structure of the content pages; subtle never does", () => {
+    const lively = applySpecPatch(withAlternates, { layout: { variety: "lively" } });
+    const structures = new Set(Array.from({ length: 60 }, (_, i) => varySpec(lively, `st${i}`).layout.structure));
+    expect(structures.size).toBeGreaterThan(1);
+    for (let i = 0; i < 30; i++) expect(varySpec(withAlternates, `sub${i}`).layout.structure).toBe(withAlternates.layout.structure);
+  });
+
   it("does not mutate the input", () => {
     const before = JSON.stringify(withAlternates);
     varySpec(withAlternates, "m");

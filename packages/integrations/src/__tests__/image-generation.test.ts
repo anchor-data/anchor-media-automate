@@ -39,12 +39,21 @@ describe("generateSlideImage", () => {
     expect(String(form.get("prompt"))).toContain("p");
   });
 
+  it("defaults to a model the API still serves", async () => {
+    const fetchImpl = vi.fn(async () => ok());
+    await generateSlideImage({ apiKey: "k", prompt: "p", references: [], fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect((JSON.parse(String(call(fetchImpl)[1].body)) as { model: string }).model).toBe("gpt-image-1-mini");
+  });
+
   it("uses plain generation when there are no references", async () => {
     const fetchImpl = vi.fn(async () => ok());
     await generateSlideImage({ apiKey: "k", prompt: "p", references: [], fetchImpl: fetchImpl as unknown as typeof fetch });
     const [url, init] = call(fetchImpl);
     expect(url).toMatch(/\/images\/generations$/);
-    expect(JSON.parse(String(init.body)).prompt).toBe("p");
+    const body = JSON.parse(String(init.body)) as { prompt: string; n: unknown };
+    expect(body.prompt).toBe("p");
+    // the JSON API wants an integer; only the multipart form carries it as text
+    expect(body.n).toBe(1);
   });
 
   it("retries transient failures then succeeds", async () => {

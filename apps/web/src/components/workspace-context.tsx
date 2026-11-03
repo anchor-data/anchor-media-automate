@@ -13,6 +13,7 @@ import {
   DEFAULT_AUTO_RUN_SCHEDULE,
   autoRunSettingsSchema,
   captionWithHashtags,
+  deckExtrasFrom,
   slideFieldsSchema,
   type Guideline,
   type GuidelineUpsert,
@@ -206,7 +207,8 @@ function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[
     generationError: post.generationError ?? null,
     assetUrls: assets ? assetUrlsOf(assets) : undefined,
     canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined,
-    slides: slides.success ? slides.data : undefined
+    slides: slides.success ? slides.data : undefined,
+    costUsd: deckExtrasFrom(post.slidesJson).costUsd
   };
 }
 

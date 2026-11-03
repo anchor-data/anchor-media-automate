@@ -95,3 +95,28 @@ describe("line wrapping in the pptx", () => {
     expect(bodyLines.join("|")).not.toMatch(/画\|面|切\|替/);
   });
 });
+
+describe("images in the pptx", () => {
+  // 1x1 transparent PNG
+  const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+  it("embeds a supplied image on its page only", async () => {
+    const bytes = await renderDeckPptx({ spec: DEFAULT_DESIGN_SPEC, fields, handle: "@a", images: { s3_image: PNG } });
+    const zip = await JSZip.loadAsync(bytes);
+    expect(await slideXml(zip, 3)).toContain("<p:pic>");
+    expect(await slideXml(zip, 4)).not.toContain("<p:pic>");
+    expect(Object.keys(zip.files).some((name) => name.startsWith("ppt/media/"))).toBe(true);
+  });
+
+  it("makes no picture elements without images", async () => {
+    const { zip } = await open();
+    for (let n = 1; n <= 8; n++) expect(await slideXml(zip, n)).not.toContain("<p:pic>");
+  });
+
+  it("lays the point page out differently for each structure", async () => {
+    const xml = async (structure: "classic" | "split" | "banner") =>
+      slideXml((await open(applySpecPatch(DEFAULT_DESIGN_SPEC, { layout: { structure } }))).zip, 3);
+    const [a, b, c] = [await xml("classic"), await xml("split"), await xml("banner")];
+    expect(new Set([a, b, c]).size).toBe(3);
+  });
+});

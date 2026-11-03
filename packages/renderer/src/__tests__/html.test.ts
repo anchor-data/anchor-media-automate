@@ -27,11 +27,12 @@ describe("renderSlideHtml", () => {
     expect(html).toContain(`height: ${SLIDE_HEIGHT}px`);
   });
 
-  it("contains the slide text for each page", () => {
-    expect(render(DEFAULT_DESIGN_SPEC, 1)).toContain("転職で後悔しない準備");
-    expect(render(DEFAULT_DESIGN_SPEC, 3)).toContain("自己分析");
-    expect(render(DEFAULT_DESIGN_SPEC, 7)).toContain("迷ったら");
-    expect(render(DEFAULT_DESIGN_SPEC, 8)).toContain("フォローしてね");
+  it("contains the slide text for each page (line breaks aside)", () => {
+    const flat = (index: number) => render(DEFAULT_DESIGN_SPEC, index).replace(/\n/g, "");
+    expect(flat(1)).toContain("転職で後悔しない準備");
+    expect(flat(3)).toContain("自己分析");
+    expect(flat(7)).toContain("迷ったら");
+    expect(flat(8)).toContain("フォローしてね");
   });
 
   it("escapes HTML in copy", () => {
@@ -54,13 +55,13 @@ describe("renderSlideHtml", () => {
     expect(render(applySpecPatch(DEFAULT_DESIGN_SPEC, { type: { underlineHeads: true } }))).toContain("underline");
   });
 
-  it("uses natural Japanese phrase wrapping", () => {
-    expect(render()).toContain("auto-phrase");
+  it("keeps the line breaks chosen by the layout", () => {
+    expect(render()).toContain("white-space: pre");
   });
 
   it("omits decoration when the spec says none", () => {
-    expect(render(applySpecPatch(DEFAULT_DESIGN_SPEC, { layout: { decor: "none" } }))).not.toContain('class="decor');
-    expect(render()).toContain('class="decor');
+    expect(render(applySpecPatch(DEFAULT_DESIGN_SPEC, { layout: { decor: "none" } }))).not.toContain('data-role="decor"');
+    expect(render()).toContain('data-role="decor"');
   });
 });
 
@@ -71,7 +72,7 @@ describe("renderDeckHtml", () => {
 
   it("contains all 8 slides in one document", () => {
     expect((deck.match(/class="slide"/g) ?? []).length).toBe(8);
-    expect(deck).toContain("転職で後悔しない準備");
+    expect(deck.replace(/\n/g, "")).toContain("転職で後悔しない準備");
     expect(deck).toContain("フォローしてね");
   });
 
@@ -81,6 +82,15 @@ describe("renderDeckHtml", () => {
   });
 
   it("marks the current page in the pager of each slide", () => {
-    expect((deck.match(/<i class="on">/g) ?? []).length).toBe(8);
+    expect((deck.match(/data-role="pager-active"/g) ?? []).length).toBe(8);
+  });
+});
+
+describe("images in the html preview", () => {
+  it("draws a supplied image and nothing without one", () => {
+    const withImage = renderSlideHtml({ spec: DEFAULT_DESIGN_SPEC, index: 3, fields, handle: "@a", images: { s3_image: "data:image/png;base64,AAAA" } });
+    expect(withImage).toContain("<img");
+    expect(withImage).toContain("data:image/png;base64,AAAA");
+    expect(render(DEFAULT_DESIGN_SPEC, 3)).not.toContain("<img");
   });
 });

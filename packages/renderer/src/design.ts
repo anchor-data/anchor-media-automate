@@ -1,5 +1,5 @@
 import { applySpecPatch, DEFAULT_DESIGN_SPEC, ensureReadable, type DesignSpec } from "./spec";
-import { parseSpecPatch } from "./nl";
+import { parseSpecPatch, usageOf, type ChatResponse, type ModelUsage } from "./nl";
 
 const MODEL = "gpt-4.1";
 
@@ -19,13 +19,13 @@ Return ONLY a JSON object:
   "summary": "one or two sentences describing the design you chose, in Japanese",
   "theme": { "bg", "card", "ink", "primary", "accent", "onAccent", "bar", "onBar", "accentAlternates" },
   "type": { "headWeight", "bodyWeight", "headScale", "bodyScale", "numScale", "underlineHeads", "letterSpacing" },
-  "layout": { "numberAlign", "headAlign", "bodyAlign", "frame", "radius", "decor", "variety" }
+  "layout": { "numberAlign", "headAlign", "bodyAlign", "frame", "radius", "decor", "structure", "variety" }
 }
 Rules:
 - Colors are hex like "#1a2b3c". bg = page background, card = panel surface, ink = body text, primary = headings/numbers/frame, accent = pills + decoration, onAccent = text on accent, bar = bottom bar + dark panels, onBar = text on the bar. Keep text readable (dark on light, light on dark).
 - accentAlternates: 2-4 other accent colors that fit the same palette; each post will use one of them so posts do not all look identical.
 - headWeight/bodyWeight 300-900; headScale/bodyScale 0.8-1.1 (never enlarge: copy is length-limited); numScale 0.6-1.2; letterSpacing -0.02..0.1 (em).
-- numberAlign/headAlign/bodyAlign: "left"|"center"|"right". frame: "outline"|"filled"|"none". radius: 0-64. decor: "blobs"|"dots"|"stripes"|"none". variety: how much each post may deviate: "none"|"subtle"|"lively".
+- numberAlign/headAlign/bodyAlign: "left"|"center"|"right". frame: "outline"|"filled"|"none". radius: 0-64. decor: "blobs"|"dots"|"stripes"|"none". structure: how the content pages are arranged: "classic" (number, heading pill, text stacked), "split" (number in a left column, heading and text on the right), "banner" (heading in a colored band on top, text below). variety: how much each post may deviate: "none"|"subtle"|"lively".
 Omit anything you are unsure about.`;
 }
 
@@ -37,7 +37,9 @@ export interface DesignRequest extends ReferenceInput {
 }
 
 /** Reference screenshots (+ guideline) -> the account's DesignSpec, passed through the readability guardrail. */
-export async function requestDesignFromReferences(input: DesignRequest): Promise<{ spec: DesignSpec; summary: string }> {
+export async function requestDesignFromReferences(
+  input: DesignRequest
+): Promise<{ spec: DesignSpec; summary: string; usage: ModelUsage | undefined }> {
   if (input.images.length === 0 && !input.guideline?.trim()) {
     throw new Error("Add reference screenshots or a design guideline");
   }
@@ -61,8 +63,8 @@ export async function requestDesignFromReferences(input: DesignRequest): Promise
     })
   });
   if (!response.ok) throw new Error(`OpenAI request failed (${response.status}): ${await response.text()}`);
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = (await response.json()) as ChatResponse;
   const patch = parseSpecPatch(data.choices?.[0]?.message?.content ?? "");
   const summary = typeof patch.summary === "string" ? patch.summary : "";
-  return { spec: ensureReadable(applySpecPatch(DEFAULT_DESIGN_SPEC, patch)), summary };
+  return { spec: ensureReadable(applySpecPatch(DEFAULT_DESIGN_SPEC, patch)), summary, usage: usageOf(MODEL, data) };
 }

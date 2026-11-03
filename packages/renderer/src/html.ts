@@ -20,11 +20,11 @@ function element(el: LayoutEl, spec: DesignSpec): string {
     return `<div class="el"${role} style="${boxCss(el.box)} background: ${el.fill}; ${radius} ${line} ${opacity}"></div>`;
   }
   if (el.type === "image") {
-    return `<img class="el"${role} src="${esc(el.src)}" alt="" style="${boxCss(el.box)} object-fit: cover; border-radius: ${el.radius ?? 0}px;">`;
+    return `<img class="el"${role} src="${esc(el.src)}" alt="" style="${boxCss(el.box)} object-fit: contain; border-radius: ${el.radius ?? 0}px;">`;
   }
   const fill = el.fill ? `background: ${el.fill}; border-radius: ${el.radius ?? 0}px;` : "";
   const underline = el.underline ? " text-decoration: underline; text-underline-offset: 12px;" : "";
-  return `<div class="el text"${role} style="${boxCss(el.box)} font-size: ${Math.round(el.px)}px; font-weight: ${el.weight}; color: ${el.color}; text-align: ${el.align}; justify-content: ${JUSTIFY[el.align]};${underline} ${fill}">${esc(el.text)}</div>`;
+  return `<div class="el text"${role} style="${boxCss(el.box)} font-size: ${Math.round(el.px)}px; font-weight: ${el.weight}; color: ${el.color}; text-align: ${el.align}; justify-content: ${JUSTIFY[el.align]}; align-items: ${el.valign === "top" ? "flex-start" : "center"};${underline} ${fill}">${esc(el.text)}</div>`;
 }
 
 function css(spec: DesignSpec): string {

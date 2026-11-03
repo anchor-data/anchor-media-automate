@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { requestDesignFromReferences, buildReferencePrompt } from "../design";
 import { DEFAULT_DESIGN_SPEC } from "../spec";
 
-const reply = (content: string) => new Response(JSON.stringify({ choices: [{ message: { content } }] }));
+const reply = (content: string) =>
+  new Response(JSON.stringify({ choices: [{ message: { content } }], usage: { prompt_tokens: 9000, completion_tokens: 900 } }));
 
 describe("buildReferencePrompt", () => {
   it("includes the guideline and the allowed fields", () => {
@@ -11,6 +12,7 @@ describe("buildReferencePrompt", () => {
     expect(prompt).toContain("@wakaru_tenshoku");
     expect(prompt).toContain("accentAlternates");
     expect(prompt).toContain("variety");
+    expect(prompt).toContain("structure");
   });
 
   it("copes with no guideline", () => {
@@ -34,6 +36,7 @@ describe("requestDesignFromReferences", () => {
     };
     expect(body.messages[0]!.content.filter((part) => part.type === "image_url")).toHaveLength(2);
     expect(result.summary).toBe("navy and yellow, bold");
+    expect(result.usage).toEqual({ model: "gpt-4.1", inputTokens: 9000, outputTokens: 900 });
     expect(result.spec.theme.primary).toBe("#123a7a");
     expect(result.spec.theme.accentAlternates).toEqual(["#ff7a59"]);
     expect(result.spec.layout.variety).toBe("lively");

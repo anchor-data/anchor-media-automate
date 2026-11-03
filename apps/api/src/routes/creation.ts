@@ -7,10 +7,12 @@ import {
   type CreationToolContext
 } from "@ama/integrations";
 import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
-import { captionWithHashtags, deckExtrasFrom, slideFieldsSchema, slidesJsonWith } from "@ama/shared";
+import { addCost, captionWithHashtags, deckExtrasFrom, slideFieldsSchema, slidesJsonWith } from "@ama/shared";
+import { chatCostUsd } from "@ama/integrations";
 import { requestSpecPatch, resolvePostDesign } from "@ama/renderer";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
+import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
 import { renderPost } from "../lib/render";
 
 export const creationRoutes = new Hono<{ Bindings: Bindings }>();
@@ -20,7 +22,10 @@ function toolContext(repo: Repository): CreationToolContext {
     getIdea: (ideaId) => repo.getIdea(ideaId),
     getGuideline: (accountId) => repo.getActiveGuideline(accountId),
     listReferences: (accountId) => repo.listReferences(accountId),
-    getJob: async (jobId) => (await repo.listJobs()).find((job) => job.id === jobId) ?? null
+    getJob: async (jobId) => (await repo.listJobs()).find((job) => job.id === jobId) ?? null,
+    // Only "asset" images are offered for placement; "reference" sheets feed AI generation instead.
+    listImageAssets: (accountId) => repo.listImageAssets(accountId, ["asset"]),
+    getImageStylePrompt: async (accountId) => (await repo.getAccount(accountId))?.imageStylePrompt ?? ""
   };
 }
 
@@ -41,11 +46,30 @@ export async function generatePost(
     // A regenerated copy keeps the design the post already has.
     const stored = deckExtrasFrom((await repo.getPost(postId))?.post.slidesJson);
     const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(input, toolContext(repo));
+    const generated = await generateDeckImages(
+      repo,
+      { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
+      input.accountId,
+      output.deck
+    );
+    let costUsd = addCost({ copy: 0, images: 0, design: 0 }, "copy", output.costUsd);
+    costUsd = addCost(costUsd, "images", generated.costUsd);
+    // Regenerated copy keeps what the post already cost; the new run adds to it.
+    costUsd = {
+      copy: stored.costUsd.copy + costUsd.copy,
+      images: stored.costUsd.images + costUsd.images,
+      design: stored.costUsd.design
+    };
     const post = await repo.updatePost(postId, {
       // Hashtags live inside the caption text; the separate list stays empty so there is one source of truth.
       caption: captionWithHashtags(output.deck.caption, output.deck.hashtags),
       hashtags: [],
-      slidesJson: slidesJsonWith(output.deck.slides, { images: [], design: stored.design, designPrompt: stored.designPrompt }),
+      slidesJson: slidesJsonWith(output.deck.slides, {
+        images: generated.images,
+        design: stored.design,
+        designPrompt: stored.designPrompt,
+        costUsd
+      }),
       postType: output.deck.postType
     });
     const run: AgentRun = {
@@ -54,10 +78,11 @@ export async function generatePost(
       createdPostId: postId,
       kind,
       summary: output.summary,
-      outputJson: { reasoning: output.reasoning, ideaId: input.ideaId }
+      outputJson: { reasoning: [...output.reasoning, ...generated.warnings], ideaId: input.ideaId, costUsd: output.costUsd ?? null }
     };
     await repo.createAgentRun(run);
-    if (post) await renderPost(repo, createCanva(env, repo), post);
+    await discardGeneratedImages(repo, env.IMAGE_ASSETS, stored.images);
+    if (post) await renderPost(repo, createCanva(env, repo), post, { imageBucket: env.IMAGE_ASSETS });
   } catch (error) {
     // renderPost already marks its own failures; this covers agent failures.
     await repo.updatePost(postId, { generationStatus: "failed", generationError: errorMessage(error) });
@@ -195,17 +220,20 @@ creationRoutes.post("/posts/:id/design/regenerate", async (c) => {
   const extras = deckExtrasFrom(post.slidesJson);
   const prompt = parsed.data.prompt?.trim() ?? "";
   let design;
+  let costUsd = extras.costUsd;
   try {
-    design = prompt
-      ? (
-          await requestSpecPatch({
-            apiKey: c.env.OPENAI_API_KEY,
-            request: prompt,
-            current: resolvePostDesign(account.design?.spec, extras.design, post.id),
-            guideline: account.design?.guideline
-          })
-        ).spec
-      : resolvePostDesign(account.design?.spec, null, `${post.id}:${Date.now()}`);
+    if (prompt) {
+      const result = await requestSpecPatch({
+        apiKey: c.env.OPENAI_API_KEY,
+        request: prompt,
+        current: resolvePostDesign(account.design?.spec, extras.design, post.id),
+        guideline: account.design?.guideline
+      });
+      design = result.spec;
+      costUsd = addCost(costUsd, "design", result.usage ? chatCostUsd(result.usage.model, result.usage) : null);
+    } else {
+      design = resolvePostDesign(account.design?.spec, null, `${post.id}:${Date.now()}`);
+    }
   } catch (error) {
     return c.json({ error: errorMessage(error) }, 502);
   }
@@ -213,10 +241,10 @@ creationRoutes.post("/posts/:id/design/regenerate", async (c) => {
   const updated = await repo.updatePost(post.id, {
     generationStatus: "pending",
     generationError: null,
-    slidesJson: slidesJsonWith(slides.data, { ...extras, design, designPrompt: prompt })
+    slidesJson: slidesJsonWith(slides.data, { ...extras, design, designPrompt: prompt, costUsd })
   });
   if (!updated) return c.json({ error: "Post not found" }, 404);
-  await runInBackground(c, renderPost(repo, createCanva(c.env, repo), updated).catch(() => undefined));
+  await runInBackground(c, renderPost(repo, createCanva(c.env, repo), updated, { imageBucket: c.env.IMAGE_ASSETS }).catch(() => undefined));
   return c.json({ item: updated, mode: repo.mode }, 202);
 });
 
@@ -229,7 +257,7 @@ creationRoutes.post("/posts/:id/render", async (c) => {
   const detail = await repo.getPost(c.req.param("id"));
   if (!detail) return c.json({ error: "Post not found" }, 404);
   try {
-    await renderPost(repo, createCanva(c.env, repo), detail.post, { reexport: parsed.data.reexport });
+    await renderPost(repo, createCanva(c.env, repo), detail.post, { reexport: parsed.data.reexport, imageBucket: c.env.IMAGE_ASSETS });
   } catch (error) {
     return c.json({ error: errorMessage(error) }, 502);
   }

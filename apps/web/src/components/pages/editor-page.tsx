@@ -9,6 +9,7 @@ import { SlideTile } from "../slide-tile";
 import { PageTopbar, Tabs } from "../ui/page";
 import { useWorkspace } from "../workspace-context";
 import { canvaDesignUrl } from "../../lib/canva";
+import { totalCost } from "@ama/shared";
 import type { MockPost } from "../../lib/mock-data";
 import { STAGE_LABEL, stageOf } from "../../lib/post-stage";
 import { formatWaiting } from "../../lib/schedule";
@@ -270,6 +271,14 @@ function EditorBody({ post }: { post: MockPost }) {
                   </a>
                 ) : null}
               </div>
+              {post.costUsd && totalCost(post.costUsd) > 0 ? (
+                <p className="small" style={{ margin: 0 }}>
+                  生成コスト <strong>${totalCost(post.costUsd).toFixed(3)}</strong>
+                  <span className="muted">
+                    {" "}(文章 ${post.costUsd.copy.toFixed(3)} · 画像 ${post.costUsd.images.toFixed(3)} · デザイン ${post.costUsd.design.toFixed(3)})
+                  </span>
+                </p>
+              ) : null}
               <p className="muted small">
                 プレビュー画像のURLは一定時間で期限切れになります。表示されない場合は「プレビューを更新」を押してください。「もう一度生成」は文章と画像を上書きします。
               </p>

@@ -1,10 +1,32 @@
 import type { Repository } from "@ama/db";
-import type { CanvaClient } from "@ama/integrations";
+import { bytesToDataUrl, type CanvaClient } from "@ama/integrations";
 import { PPTX_MIME, renderDeckPptx, resolvePostDesign } from "@ama/renderer";
 import { deckExtrasFrom, slideFieldsSchema, slidesJsonWith } from "@ama/shared";
-import type { Post } from "@ama/shared";
+import type { Post, SlideImage } from "@ama/shared";
+import { imageAssetKey } from "./image-assets";
 
 export const EXPECTED_PAGE_COUNT = 8;
+
+/**
+ * Image bytes for the images chosen on a post, as data URLs by slot. An image whose file is gone from
+ * storage is skipped: the page then simply renders its no-image layout.
+ */
+async function loadImageData(
+  repo: Repository,
+  bucket: R2Bucket | undefined,
+  images: readonly SlideImage[]
+): Promise<Record<string, string>> {
+  if (!bucket) return {};
+  const loaded = await Promise.all(
+    images.map(async (image): Promise<[string, string] | null> => {
+      const asset = await repo.getImageAsset(image.assetId);
+      const object = asset ? await bucket.get(imageAssetKey(asset.id)) : null;
+      if (!asset || !object) return null;
+      return [image.slot, bytesToDataUrl(new Uint8Array(await object.arrayBuffer()), asset.contentType)];
+    })
+  );
+  return Object.fromEntries(loaded.filter((entry): entry is [string, string] => entry !== null));
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unexpected error";
@@ -21,7 +43,7 @@ export async function renderPost(
   repo: Repository,
   canva: CanvaClient,
   post: Post,
-  options: { reexport?: boolean } = {}
+  options: { reexport?: boolean; imageBucket?: R2Bucket } = {}
 ): Promise<void> {
   try {
     await repo.updatePost(post.id, { generationStatus: "rendering", generationError: null });
@@ -41,7 +63,8 @@ export async function renderPost(
       if (!extras.design) {
         await repo.updatePost(post.id, { slidesJson: slidesJsonWith(slides.data, { ...extras, design }) });
       }
-      const pptx = await renderDeckPptx({ spec: design, fields: slides.data, handle: account.instagramHandle });
+      const images = await loadImageData(repo, options.imageBucket, extras.images);
+      const pptx = await renderDeckPptx({ spec: design, fields: slides.data, handle: account.instagramHandle, images });
       ({ designId } = await canva.importFile({ title: post.title, bytes: pptx, mimeType: PPTX_MIME }));
     }
 

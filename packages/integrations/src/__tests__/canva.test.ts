@@ -295,3 +295,47 @@ describe("importFile", () => {
     expect(design.designId).toMatch(/^design_/);
   });
 });
+
+describe("polling through transient Canva errors", () => {
+  const tokenRoute = { "/oauth/token": () => json({ access_token: "at" }) };
+
+  function importing(statusResponses: Array<() => Response>) {
+    let polls = 0;
+    return new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: memoryStore("rt"),
+      sleep: noSleep,
+      fetchImpl: routedFetch({
+        ...tokenRoute,
+        "/imports": () => json({ job: { id: "JP", status: "in_progress" } }),
+        "/imports/JP": () => statusResponses[Math.min(polls++, statusResponses.length - 1)]!()
+      }) as unknown as typeof fetch
+    });
+  }
+  const ok = () => json({ job: { id: "JP", status: "success", result: { designs: [{ id: "DP", urls: { edit_url: "https://canva.com/edit/DP" } }] } } });
+  const serverError = () => json({ statusCode: 500, error: "server error" }, 500);
+
+  it("keeps polling after a 5xx on the status request", async () => {
+    const design = await importing([serverError, serverError, ok]).importFile({ title: "t", bytes: new Uint8Array([1]), mimeType: "application/pdf" });
+    expect(design.designId).toBe("DP");
+  });
+
+  it("gives up with the error when the status keeps failing", async () => {
+    await expect(
+      importing([serverError]).importFile({ title: "t", bytes: new Uint8Array([1]), mimeType: "application/pdf" })
+    ).rejects.toThrow(/500/);
+  });
+
+  it("does not retry client errors", async () => {
+    let calls = 0;
+    const client = importing([
+      () => {
+        calls++;
+        return json({ error: "nope" }, 404);
+      }
+    ]);
+    await expect(client.importFile({ title: "t", bytes: new Uint8Array([1]), mimeType: "application/pdf" })).rejects.toThrow(/404/);
+    expect(calls).toBe(1);
+  });
+});

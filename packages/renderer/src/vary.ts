@@ -47,7 +47,8 @@ export function varySpec(spec: DesignSpec, seed: string): DesignSpec {
   if (spec.layout.variety === "lively") {
     const underlineHeads = random() < 0.35 ? !spec.type.underlineHeads : spec.type.underlineHeads;
     const decor = random() < 0.25 ? pick(random, ["blobs", "dots", "stripes"] as const) : spec.layout.decor;
-    next = { ...next, type: { ...next.type, underlineHeads }, layout: { ...next.layout, decor } };
+    const structure = random() < 0.3 ? pick(random, ["classic", "split", "banner"] as const) : spec.layout.structure;
+    next = { ...next, type: { ...next.type, underlineHeads }, layout: { ...next.layout, decor, structure } };
   }
   return ensureReadable(next);
 }

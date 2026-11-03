@@ -25,6 +25,8 @@ export type LayoutEl = { role?: "decor" | "frame" | "bar" | "pager" | "pager-act
       color: string;
       align: Align;
       underline?: boolean;
+      /** Vertical placement inside the box; default middle. */
+      valign?: "top" | "middle";
       /** A filled pill/panel behind the text (one editable element in Canva). */
       fill?: string;
       radius?: number;
@@ -119,10 +121,11 @@ function content({ spec, index, fields: f, images }: LayoutInput): LayoutEl[] {
   const image = images?.[`s${index}_image`];
   const els: LayoutEl[] = [];
 
-  const text = (b: Box, value: string, px: number, weight: number, color: string, align: Align, extra: { underline?: boolean; fill?: string; radius?: number; wrap?: boolean } = {}) =>
+  const text = (b: Box, value: string, px: number, weight: number, color: string, align: Align, extra: { underline?: boolean; fill?: string; radius?: number; wrap?: boolean; valign?: "top" | "middle" } = {}) =>
     els.push({
       type: "text", box: b, text: extra.wrap === false ? value : fit(value, b.w - (extra.fill ? 80 : 0), px), px, weight, color, align,
       ...(extra.underline ? { underline: true } : {}),
+      ...(extra.valign ? { valign: extra.valign } : {}),
       ...(extra.fill ? { fill: extra.fill, radius: extra.radius } : {})
     });
   const pill = (b: Box, value: string, px: number, weight: number) =>
@@ -130,7 +133,8 @@ function content({ spec, index, fields: f, images }: LayoutInput): LayoutEl[] {
   const picture = (b: Box) => image && els.push({ type: "image", box: b, src: image, radius: Math.max(0, l.radius - 8) });
   const head = (b: Box, value: string, px: number, color: string, align: Align) =>
     text(b, value, px * t.headScale, t.headWeight, color, align, { underline: t.underlineHeads });
-  const body = (b: Box, px: number, align: Align = l.bodyAlign) => text(b, get("body"), px * t.bodyScale, t.bodyWeight, c.ink, align);
+  const body = (b: Box, px: number, align: Align = l.bodyAlign, valign?: "top" | "middle") =>
+    text(b, get("body"), px * t.bodyScale, t.bodyWeight, c.ink, align, { valign });
 
   switch (slideKind(index)) {
     case "cover": {
@@ -188,20 +192,20 @@ function content({ spec, index, fields: f, images }: LayoutInput): LayoutEl[] {
         els.push({ type: "shape", shape: "rect", box: box(350, 150, 10, 820), fill: c.accent });
         head(box(385, 140, 585, 230), get("head"), 96, c.primary, "left");
         if (image) {
-          body(box(385, 400, 585, 330), 44, "left");
+          body(box(385, 400, 585, 330), 44, "left", "top");
           picture(box(385, 760, 585, 360));
         } else {
-          body(box(385, 410, 585, 600), 44, "left");
+          body(box(385, 410, 585, 600), 44, "left", "top");
         }
       } else if (l.structure === "banner") {
         els.push({ type: "shape", shape: "roundRect", box: box(CONTENT_X, 110, CONTENT_W, 290), radius: Math.max(0, l.radius - 8), fill: c.accent });
         num(box(140, 120, 200, 270), 190, c.onAccent, l.numberAlign);
         head(box(360, 130, 580, 250), get("head"), 100, c.onAccent, "left");
         if (image) {
-          body(box(CONTENT_X, 440, CONTENT_W, 300), 46, l.bodyAlign);
+          body(box(CONTENT_X, 440, CONTENT_W, 300), 46, l.bodyAlign, "top");
           picture(box(CONTENT_X, 770, CONTENT_W, 350));
         } else {
-          body(box(CONTENT_X, 450, CONTENT_W, 560), 46, l.bodyAlign);
+          body(box(CONTENT_X, 450, CONTENT_W, 560), 46, l.bodyAlign, "top");
         }
       } else if (image) {
         num(box(CONTENT_X, 100, CONTENT_W, 230), 190, c.primary, l.numberAlign);

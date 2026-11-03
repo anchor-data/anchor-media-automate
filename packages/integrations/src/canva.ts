@@ -13,6 +13,8 @@ export const DESIGN_PAGES_CACHE_TTL_MS = 60 * 60 * 1000;
 
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ATTEMPTS = 40;
+/** Consecutive 5xx answers to a job status request that are tolerated. */
+const POLL_MAX_TRANSIENT_FAILURES = 4;
 const TOKEN_EXPIRY_MARGIN_MS = 60_000;
 const DESIGN_ID_RE = /\/design\/([A-Za-z0-9_-]+)/;
 const CANVA_SHORTLINK_HOSTS = new Set(["canva.link", "www.canva.link"]);
@@ -126,6 +128,18 @@ function toBase64(text: string): string {
   return btoa(Array.from(new TextEncoder().encode(text), (byte) => String.fromCharCode(byte)).join(""));
 }
 
+/** A non-2xx answer from the Canva API. */
+class CanvaHttpError extends Error {
+  constructor(
+    method: string,
+    path: string,
+    readonly status: number,
+    body: string
+  ) {
+    super(`Canva ${method} ${path} failed (${status}): ${body}`);
+  }
+}
+
 type TokenResponse = { access_token: string; expires_in?: number; refresh_token?: string };
 
 export class CanvaApiClient implements CanvaClient {
@@ -191,13 +205,20 @@ export class CanvaApiClient implements CanvaClient {
 
   private async poll<T extends Pick<CanvaJob, "job"> | CanvaImportJob>(path: string, initial: T): Promise<T> {
     let current = initial;
+    let failures = 0;
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
       if (current.job.status === "success") return current;
       if (current.job.status === "failed") {
         throw new Error(`Canva job failed: ${current.job.error?.message ?? "unknown error"}`);
       }
       await this.sleep(POLL_INTERVAL_MS);
-      current = await this.request<T>("GET", path);
+      try {
+        current = await this.request<T>("GET", path);
+        failures = 0;
+      } catch (error) {
+        // A status check that hits a Canva server error says nothing about the job: ask again.
+        if (!(error instanceof CanvaHttpError) || error.status < 500 || ++failures > POLL_MAX_TRANSIENT_FAILURES) throw error;
+      }
     }
     throw new Error("Canva job timed out");
   }
@@ -286,7 +307,7 @@ export class CanvaApiClient implements CanvaClient {
       body: body ? (binary ? new Uint8Array(body) : JSON.stringify(body)) : undefined
     });
     if (!response.ok) {
-      throw new Error(`Canva ${method} ${path} failed (${response.status}): ${await response.text()}`);
+      throw new CanvaHttpError(method, path, response.status, await response.text());
     }
     return (await response.json()) as T;
   }

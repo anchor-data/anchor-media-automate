@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { chatCostUsd } from "@ama/integrations";
 import { DEFAULT_DESIGN_SPEC, designSpecSchema, requestDesignFromReferences } from "@ama/renderer";
 import type { Account, AccountDesign } from "@ama/shared";
 import { accountDesignSchema, autoRunSettingsSchema } from "@ama/shared";
@@ -110,7 +111,8 @@ accountRoutes.post("/accounts/:id/design/analyze", async (c) => {
     guideline,
     referenceNote,
     summary: result.summary,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    analysisCostUsd: result.usage ? (chatCostUsd(result.usage.model, result.usage) ?? 0) : 0
   };
   const updated = await repo.updateAccountDesign(account.id, design);
   return c.json({ design: designView(updated?.design) });

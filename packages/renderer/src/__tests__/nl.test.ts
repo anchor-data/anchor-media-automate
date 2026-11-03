@@ -24,16 +24,23 @@ describe("buildSpecPrompt", () => {
     expect(prompt).toContain(DEFAULT_DESIGN_SPEC.theme.accent);
     expect(prompt).toContain("numberAlign");
     expect(prompt).toContain("headWeight");
+    expect(prompt).toContain("structure");
   });
 });
 
 describe("requestSpecPatch", () => {
   it("applies the model's patch on top of the current spec and keeps it readable", async () => {
     const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: '{"theme":{"ink":"#f8f8f8","card":"#ffffff","accent":"#2f9e6e"},"layout":{"numberAlign":"left"}}' } }] }))
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"theme":{"ink":"#f8f8f8","card":"#ffffff","accent":"#2f9e6e"},"layout":{"numberAlign":"left"}}' } }],
+          usage: { prompt_tokens: 3000, completion_tokens: 500 }
+        })
+      )
     );
-    const { spec, patch } = await requestSpecPatch({ apiKey: "k", request: "緑系、番号は左", current: DEFAULT_DESIGN_SPEC, fetchImpl: fetchImpl as unknown as typeof fetch });
+    const { spec, patch, usage } = await requestSpecPatch({ apiKey: "k", request: "緑系、番号は左", current: DEFAULT_DESIGN_SPEC, fetchImpl: fetchImpl as unknown as typeof fetch });
     expect(patch.layout).toEqual({ numberAlign: "left" });
+    expect(usage).toEqual({ model: "gpt-4.1", inputTokens: 3000, outputTokens: 500 });
     expect(spec.theme.accent).toBe("#2f9e6e");
     expect(spec.layout.numberAlign).toBe("left");
     // The model asked for near-white ink on white: the guardrail replaced it.

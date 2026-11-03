@@ -93,6 +93,12 @@ function Swatches({ spec }: { spec: DesignSpec }) {
   );
 }
 
+const STRUCTURE_LABEL: Record<DesignSpec["layout"]["structure"], string> = {
+  classic: "クラシック (番号・見出し・本文を縦に配置)",
+  split: "スプリット (左に番号、右に見出しと本文)",
+  banner: "バナー (見出しを帯にして上に配置)"
+};
+
 const VARIETY_LABEL: Record<DesignSpec["layout"]["variety"], string> = {
   none: "変えない",
   subtle: "少しだけ (色・番号の位置)",
@@ -253,11 +259,15 @@ export function DesignPage() {
                 <p className="muted small" style={{ margin: 0 }}>
                   {design.hasDesign ? design.summary || "デザインが設定されています" : "まだデザインがありません。標準のデザインで生成されます"}
                 </p>
+                {design.analysisCostUsd > 0 ? (
+                  <p className="muted small" style={{ margin: 0 }}>デザイン作成コスト ${design.analysisCostUsd.toFixed(3)}</p>
+                ) : null}
               </div>
               <Swatches spec={design.spec} />
               <ul className="bullets small">
                 <li>見出しの太さ: {design.spec.type.headWeight} / 本文: {design.spec.type.bodyWeight}</li>
                 <li>角丸: {design.spec.layout.radius}px · 枠: {design.spec.layout.frame} · 装飾: {design.spec.layout.decor}</li>
+                <li>ページ構成: {STRUCTURE_LABEL[design.spec.layout.structure]}</li>
                 <li>番号の位置: {design.spec.layout.numberAlign} · 見出しの下線: {design.spec.type.underlineHeads ? "あり" : "なし"}</li>
                 <li>投稿ごとの変化: {VARIETY_LABEL[design.spec.layout.variety]}</li>
               </ul>

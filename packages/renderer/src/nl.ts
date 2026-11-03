@@ -2,6 +2,23 @@ import { applySpecPatch, ensureReadable, type DesignSpec } from "./spec";
 
 const MODEL = "gpt-4.1";
 
+/** Tokens a model call used, so callers can price it. */
+export interface ModelUsage {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface ChatResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
+export function usageOf(model: string, data: ChatResponse): ModelUsage | undefined {
+  const { prompt_tokens: inputTokens, completion_tokens: outputTokens } = data.usage ?? {};
+  return typeof inputTokens === "number" && typeof outputTokens === "number" ? { model, inputTokens, outputTokens } : undefined;
+}
+
 /** Prompt that turns a free-text design request into a partial DesignSpec (JSON patch). */
 export function buildSpecPrompt(request: string, current: DesignSpec, guideline = ""): string {
   return `You translate a design request for an Instagram carousel (1080x1350, Japanese text) into a JSON patch.
@@ -15,7 +32,7 @@ Return ONLY a JSON object with the fields to CHANGE (omit everything else). Allo
   Keep text readable: dark text on light surfaces and light text on dark ones. Change related colors together so the palette stays coherent.
 - type: headWeight (300-900), bodyWeight (300-900), headScale (0.8-1.1), bodyScale (0.8-1.1), numScale (0.6-1.2), underlineHeads (boolean), letterSpacing (-0.02..0.1, em).
   Never enlarge text above 1.1: copy is length-limited to fit.
-- layout: numberAlign / headAlign / bodyAlign ("left"|"center"|"right"), frame ("outline"|"filled"|"none"), radius (0-64 px), decor ("blobs"|"dots"|"stripes"|"none"), variety ("none"|"subtle"|"lively").
+- layout: numberAlign / headAlign / bodyAlign ("left"|"center"|"right"), frame ("outline"|"filled"|"none"), radius (0-64 px), decor ("blobs"|"dots"|"stripes"|"none"), structure ("classic" stacked | "split" number column + text column | "banner" heading band on top; arrangement of the content pages), variety ("none"|"subtle"|"lively").
 
 ${guideline.trim() ? `Account design guideline (keep consistent with it unless the request says otherwise):\n${guideline.trim()}\n\n` : ""}Request: ${request}`;
 }
@@ -46,7 +63,9 @@ export interface SpecRequest {
  * Free text -> new DesignSpec. The model only proposes a patch; invalid fields are dropped and the
  * result is passed through the readability guardrail before it is used.
  */
-export async function requestSpecPatch(input: SpecRequest): Promise<{ spec: DesignSpec; patch: Record<string, unknown> }> {
+export async function requestSpecPatch(
+  input: SpecRequest
+): Promise<{ spec: DesignSpec; patch: Record<string, unknown>; usage: ModelUsage | undefined }> {
   if (!input.apiKey) throw new Error("OpenAI API key is not configured");
   const fetchImpl = input.fetchImpl ?? ((url, init) => fetch(url, init));
   const response = await fetchImpl("https://api.openai.com/v1/chat/completions", {
@@ -59,7 +78,7 @@ export async function requestSpecPatch(input: SpecRequest): Promise<{ spec: Desi
     })
   });
   if (!response.ok) throw new Error(`OpenAI request failed (${response.status}): ${await response.text()}`);
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = (await response.json()) as ChatResponse;
   const patch = parseSpecPatch(data.choices?.[0]?.message?.content ?? "");
-  return { spec: ensureReadable(applySpecPatch(input.current, patch)), patch };
+  return { spec: ensureReadable(applySpecPatch(input.current, patch)), patch, usage: usageOf(MODEL, data) };
 }

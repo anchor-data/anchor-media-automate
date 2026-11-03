@@ -96,3 +96,13 @@ describe("layoutSlide", () => {
     expect(active).toHaveLength(1);
   });
 });
+
+describe("text placement", () => {
+  it("top-aligns the body next to the heading in the split and banner structures", () => {
+    for (const structure of ["split", "banner"] as const) {
+      const body = texts(layout(withStructure(structure), 3)).find((t) => t.text.includes("得意"))!;
+      expect(body.valign, structure).toBe("top");
+    }
+    expect(texts(layout(DEFAULT_DESIGN_SPEC, 3)).find((t) => t.text.includes("得意"))!.valign ?? "middle").toBe("middle");
+  });
+});

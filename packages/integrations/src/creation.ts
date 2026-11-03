@@ -12,7 +12,7 @@ import type {
   SlideFields
 } from "@ama/shared";
 import { NotConfiguredError } from "./errors";
-import { logOpenAiRunCost } from "./openai-cost";
+import { estimateOpenAiCost, logOpenAiRunCost } from "./openai-cost";
 
 export type CreationToolContext = {
   getIdea: (ideaId: string) => Promise<Idea | null>;
@@ -35,6 +35,8 @@ export type CreationRunInput = {
 
 export type CreationRunOutput = {
   summary: string;
+  /** Measured cost of the agent run (USD); null when the model has no known rate. */
+  costUsd?: number | null;
   deck: SlideDeck;
   reasoning: string[];
 };
@@ -331,10 +333,13 @@ Required workflow:
 
     const userMessage = buildCreationUserMessage(idea.id, input);
 
+    let outcome: unknown;
     try {
       const result = await run(agent, userMessage, { maxTurns: 20 });
+      outcome = result;
       logOpenAiRunCost("creation", agent.model, result);
     } catch (error) {
+      outcome = error;
       logOpenAiRunCost("creation", agent.model, error);
       if (!state.accepted) {
         throw new Error(error instanceof Error ? error.message : "Creation agent failed");
@@ -346,7 +351,11 @@ Required workflow:
         `Creation agent produced no valid deck after ${state.rejections} rejected attempt(s): ${state.lastErrors.join(" / ") || "no submission"}`
       );
     }
-    return { ...state.accepted, reasoning: [...state.accepted.reasoning, "mode=openai-agents", "via=submit_deck"] };
+    return {
+      ...state.accepted,
+      costUsd: estimateOpenAiCost(agent.model, outcome)?.usd ?? null,
+      reasoning: [...state.accepted.reasoning, "mode=openai-agents", "via=submit_deck"]
+    };
   }
 }
 

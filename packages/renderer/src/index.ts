@@ -6,3 +6,4 @@ export * from "./wrap";
 export * from "./vary";
 export * from "./design";
 export * from "./layout";
+export * from "./image-size";
