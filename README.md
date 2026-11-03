@@ -102,7 +102,7 @@ When both variables are set, API routes use Turso. Otherwise, they use the mock 
 
 ## Integrations
 
-- **OpenAI**: `OPENAI_API_KEY`. Ideation and creation use `@openai/agents` (`gpt-4.1`); design/structure inference use chat completions with images; illustrations use `gpt-image-1-mini` by default. Token usage is converted to USD (`packages/integrations/src/openai-cost.ts`).
+- **OpenAI**: `OPENAI_API_KEY`. Ideation and creation use `@openai/agents` (`gpt-4.1-mini`); design/structure inference use `gpt-4.1` chat completions with images; illustrations use `gpt-image-1-mini` by default. Token usage is converted to USD (`packages/integrations/src/openai-cost.ts`).
 - **Canva Connect**: `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`, `CANVA_REFRESH_TOKEN` (user OAuth; the refresh token rotates and is kept in `canva_tokens`). Scopes: `design:meta:read`, `design:content:read`, `design:content:write`. Canva is used only to import the PPTX and export PNGs; no brand templates or Autofill (so no Enterprise plan is needed). Without credentials a mock client returns placeholder previews.
 - **R2**: `IMAGE_ASSETS` (uploaded assets, AI illustrations), `REFERENCE_FILES`.
 - **Instagram Graph**: mock client only; publishing is not built yet.

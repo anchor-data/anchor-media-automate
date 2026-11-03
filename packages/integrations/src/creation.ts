@@ -327,7 +327,7 @@ export class OpenAICreationAgent implements CreationAgent {
 
     const agent = new Agent({
       name: "Instagram Creation Agent",
-      model: "gpt-4.1",
+      model: "gpt-4.1-mini",
       instructions: `You are the creation agent for a Japanese Instagram career/job-change media account.
 You turn ONE selected idea into a ${structure.length}-slide 4:5 carousel (copy only; it is laid out and rendered for you).
 

@@ -385,7 +385,7 @@ export class OpenAIIdeationAgent implements IdeationAgent {
 
     const agent = new Agent({
       name: "Instagram Ideation Agent",
-      // Idea drafts are high-volume. Final slide copy stays on gpt-4.1 in the creation agent.
+      // Idea drafts are high-volume. Slide copy in the creation agent uses gpt-4.1-mini as well.
       model: "gpt-4.1-mini",
       instructions: `You are the ideation agent for a Japanese Instagram career/job-change media account.
 
