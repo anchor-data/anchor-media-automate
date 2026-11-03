@@ -8,7 +8,6 @@ import { z } from "zod";
 import { runDueAutoRuns } from "./lib/auto-run";
 import { createCanva, createRepo, type Bindings } from "./lib/env";
 import { accountRoutes } from "./routes/accounts";
-import { canvaRoutes } from "./routes/canva";
 import { creationRoutes } from "./routes/creation";
 import { ideationRoutes } from "./routes/ideation";
 import { imageRoutes } from "./routes/images";
@@ -22,7 +21,6 @@ app.use("*", async (c, next) => {
 app.route("/", ideationRoutes);
 app.route("/", creationRoutes);
 app.route("/", imageRoutes);
-app.route("/", canvaRoutes);
 app.route("/", accountRoutes);
 
 app.get("/health", (c) => {
@@ -78,22 +76,14 @@ app.post("/agent/run", async (c) => {
   const runner = createAgentRunner({
     openAiApiKey: c.env.OPENAI_API_KEY
   });
-  const canva = createCanva(c.env, repo);
-
   const output = await runner.run(parsed.data, {
     getCandidateJobs: async () => get_candidate_jobs(repo),
     getPreviousPosts: async (accountId, limit) => get_previous_posts(repo, accountId, limit),
     getAccountConfig: async (accountId) => get_account_config(repo, accountId),
     createPostDraft: async (input) => {
-      const design = await canva.autofill({
-        templateId: (await repo.getAccount(input.accountId))?.canvaTemplateId ?? "default_template",
-        fields: { s1_title: input.title, s1_sub: input.caption },
-        title: input.title
-      });
-      const [exportUrl] = await canva.exportPages(design.designId);
       const preview = create_post_draft_preview({
         ...input,
-        assets: [{ imageUrl: exportUrl ?? "", canvaDesignId: design.designId }]
+        assets: []
       });
       return { post: preview };
     },

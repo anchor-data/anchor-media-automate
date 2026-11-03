@@ -9,7 +9,6 @@ export function createPhase1Seed() {
     id: "acc_001",
     name: "Anchor Career JP",
     instagramHandle: "@anchor_career_jp",
-    canvaTemplateId: "tpl_wakaru_explainer_v1",
     tone: "やさしく実践的。保存したくなる手順解説"
   };
 

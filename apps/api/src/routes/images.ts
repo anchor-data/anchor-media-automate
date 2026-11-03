@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { validateImageUpload } from "@ama/integrations";
-import { IMAGE_ASSET_KINDS, SLIDE_IMAGE_SLOTS } from "@ama/shared";
+import { IMAGE_ASSET_KINDS } from "@ama/shared";
 import { z } from "zod";
-import { createCanva, createRepo, type Bindings } from "../lib/env";
+import { createRepo, type Bindings } from "../lib/env";
 import { imageAssetKey } from "../lib/image-assets";
 
 export const imageRoutes = new Hono<{ Bindings: Bindings }>();
@@ -10,19 +10,6 @@ export const imageRoutes = new Hono<{ Bindings: Bindings }>();
 imageRoutes.get("/accounts/:id/image-assets", async (c) => {
   const repo = createRepo(c.env);
   return c.json({ items: await repo.listImageAssets(c.req.param("id")), mode: repo.mode });
-});
-
-/** Image fields (s1_image …) the account's Canva brand template exposes; images only render into these. */
-imageRoutes.get("/accounts/:id/image-slots", async (c) => {
-  const repo = createRepo(c.env);
-  const account = await repo.getAccount(c.req.param("id"));
-  if (!account) return c.json({ error: "Account not found" }, 404);
-  try {
-    const fields = await createCanva(c.env, repo).getTemplateFieldNames(account.canvaTemplateId);
-    return c.json({ slots: SLIDE_IMAGE_SLOTS.filter((slot) => fields.includes(slot)) });
-  } catch (error) {
-    return c.json({ error: error instanceof Error ? error.message : "Could not read the template" }, 502);
-  }
 });
 
 /** Fixed image rules prepended to every AI-generated slide image. */

@@ -14,6 +14,9 @@ import type {
   SlideFields
 } from "@ama/shared";
 
+import type { SlideRole } from "@ama/shared";
+import type { DesignSpec } from "@ama/renderer/src/spec";
+
 const API_BASE_URL = "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -165,45 +168,16 @@ export async function approvePost(postId: string) {
   return request<{ item: Post }>(`/posts/${postId}/approve`, { method: "POST" });
 }
 
-export type BrandTemplate = { id: string; title: string; thumbnailUrl: string | null };
-
-export async function listBrandTemplates() {
-  return request<{ items: BrandTemplate[]; mode: string }>("/canva/brand-templates");
-}
-
-export type TemplateDraftInput = {
-  referenceUrl: string;
-  assetUrls: string[];
-  styleNotes: string;
-  /** Slides of one reference carousel, in order (image data URLs). */
-  screenshots: string[];
-};
-
-export type TemplateDraft = {
-  draft: { designId: string; editUrl: string };
-  brief: { referenceHandle: string | null; markdown: string; pages: Array<{ page: number; title: string }> };
-  mode: string;
-};
-
-/** Creates the multi-page Canva draft; the user tags and publishes it in Canva afterwards. */
-export async function createTemplateDraft(body: TemplateDraftInput) {
-  return request<TemplateDraft>("/canva/template-drafts", { method: "POST", body: JSON.stringify(body) });
-}
-
 export async function createAccountApi(body: {
   name: string;
   instagramHandle: string;
   tone: string;
-  canvaTemplateId: string;
 }) {
   return request<{ item: Account }>("/accounts", { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function putCanvaTemplate(accountId: string, templateId: string) {
-  return request<{ item: Account }>(`/accounts/${accountId}/canva-template`, {
-    method: "PUT",
-    body: JSON.stringify({ templateId })
-  });
+export async function deleteAccountApi(accountId: string) {
+  return request<{ ok: true }>(`/accounts/${accountId}`, { method: "DELETE" });
 }
 
 export async function putAutoRun(accountId: string, body: AutoRunSettings) {
@@ -224,14 +198,54 @@ export async function createContent(ideaId: string) {
   return request<{ item: Post }>(`/ideas/${ideaId}/create`, { method: "POST" });
 }
 
-export async function regeneratePost(postId: string, feedback?: string) {
+export async function regeneratePost(postId: string, feedback?: string, slideIndex?: number) {
   return request<{ item: Post }>(`/posts/${postId}/regenerate`, {
     method: "POST",
-    body: JSON.stringify({ feedback })
+    body: JSON.stringify({ feedback, slideIndex })
   });
 }
 
-/** `reexport` refreshes expired preview URLs without re-running Canva autofill. */
+/** Another take on the post's design (with a prompt: the free text is applied to the current design). Re-renders in Canva. */
+export async function regeneratePostDesign(postId: string, prompt?: string) {
+  return request<{ item: Post }>(`/posts/${postId}/design/regenerate`, {
+    method: "POST",
+    body: JSON.stringify({ prompt })
+  });
+}
+
+/** What the design page shows: the account's design, with `spec` always a complete, valid design. */
+export type AccountDesignView = {
+  spec: DesignSpec;
+  guideline: string;
+  referenceNote: string;
+  summary: string;
+  updatedAt: string | null;
+  /** What deriving the design and structure cost (USD). */
+  analysisCostUsd: number;
+  /** Page structure of the account's posts (3-10 pages, cover first, CTA last). */
+  structure: SlideRole[];
+  structureSummary: string;
+  hasDesign: boolean;
+};
+
+export async function getAccountDesign(accountId: string) {
+  return request<{ design: AccountDesignView }>(`/accounts/${accountId}/design`);
+}
+
+/** Saves the written guideline and reference note only; the design itself is not re-derived. */
+export async function saveAccountDesignNotes(accountId: string, body: { guideline?: string; referenceNote?: string }) {
+  return request<{ design: AccountDesignView }>(`/accounts/${accountId}/design`, { method: "PUT", body: JSON.stringify(body) });
+}
+
+/** Derive the account's design from reference screenshots (image data URLs) and the guideline. */
+export async function analyzeAccountDesign(
+  accountId: string,
+  body: { screenshots: string[]; guideline?: string; referenceNote?: string }
+) {
+  return request<{ design: AccountDesignView }>(`/accounts/${accountId}/design/analyze`, { method: "POST", body: JSON.stringify(body) });
+}
+
+/** `reexport` refreshes the previews from the stored Canva design (including edits made in Canva) without re-importing. */
 export async function renderPost(postId: string, reexport: boolean) {
   return request<PostDetail>(`/posts/${postId}/render`, {
     method: "POST",
@@ -321,10 +335,6 @@ export async function deleteImageAsset(assetId: string) {
 
 export const imageAssetFileUrl = (assetId: string) => `${API_BASE_URL}/image-assets/${assetId}/file`;
 
-export async function listImageSlots(accountId: string) {
-  return request<{ slots: string[] }>(`/accounts/${accountId}/image-slots`);
-}
-
 export async function getImageStyle(accountId: string) {
   return request<{ prompt: string }>(`/accounts/${accountId}/image-style`);
 }
@@ -333,5 +343,20 @@ export async function saveImageStyle(accountId: string, prompt: string) {
   return request<{ prompt: string }>(`/accounts/${accountId}/image-style`, {
     method: "PUT",
     body: JSON.stringify({ prompt })
+  });
+}
+
+/** Infer the page structure from reference screenshots; the proposal is saved and can be adjusted. */
+export async function analyzeAccountStructure(accountId: string, screenshots: string[]) {
+  return request<{ design: AccountDesignView }>(`/accounts/${accountId}/structure/analyze`, {
+    method: "POST",
+    body: JSON.stringify({ screenshots })
+  });
+}
+
+export async function saveAccountStructure(accountId: string, structure: SlideRole[]) {
+  return request<{ design: AccountDesignView }>(`/accounts/${accountId}/structure`, {
+    method: "PUT",
+    body: JSON.stringify({ structure })
   });
 }

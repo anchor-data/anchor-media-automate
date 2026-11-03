@@ -11,7 +11,8 @@ const ACCOUNT_COLUMN_MIGRATIONS = [
   "auto_run_enabled INTEGER NOT NULL DEFAULT 0",
   "auto_run_schedule TEXT NOT NULL DEFAULT '毎日 18:00'",
   "last_auto_run_at TEXT",
-  "image_style_prompt TEXT NOT NULL DEFAULT ''"
+  "image_style_prompt TEXT NOT NULL DEFAULT ''",
+  "design_json TEXT NOT NULL DEFAULT '{}'"
 ] as const;
 
 const IMAGE_ASSET_COLUMN_MIGRATIONS = [

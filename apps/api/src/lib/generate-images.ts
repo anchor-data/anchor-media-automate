@@ -10,7 +10,7 @@ import { imageAssetKey } from "./image-assets";
 
 const MAX_REFERENCE_IMAGES = 4;
 
-export type DeckImageResult = { images: SlideImage[]; warnings: string[] };
+export type DeckImageResult = { images: SlideImage[]; warnings: string[]; costUsd: number };
 
 async function loadReferences(repo: Repository, bucket: R2Bucket, accountId: string): Promise<ReferenceImage[]> {
   const references = (await repo.listImageAssets(accountId, ["reference"])).slice(0, MAX_REFERENCE_IMAGES);
@@ -36,9 +36,13 @@ export async function generateDeckImages(
 ): Promise<DeckImageResult> {
   const placed = deck.images ?? [];
   const prompts = deck.imagePrompts ?? [];
-  if (prompts.length === 0) return { images: [...placed], warnings: [] };
+  if (prompts.length === 0) return { images: [...placed], warnings: [], costUsd: 0 };
   if (!deps.bucket) {
-    return { images: [...placed], warnings: ["Image generation skipped: image storage (R2 IMAGE_ASSETS) is not configured"] };
+    return {
+      images: [...placed],
+      warnings: ["Image generation skipped: image storage (R2 IMAGE_ASSETS) is not configured"],
+      costUsd: 0
+    };
   }
   const bucket = deps.bucket;
 
@@ -84,7 +88,7 @@ export async function generateDeckImages(
     if (result.status === "fulfilled") images.push(result.value);
     else warnings.push(`Image for ${slot} failed: ${result.reason instanceof Error ? result.reason.message : "unknown error"}`);
   });
-  return { images, warnings };
+  return { images, warnings, costUsd: costs.reduce<number>((sum, cost) => sum + (cost ?? 0), 0) };
 }
 
 /** Delete the generated images of a previous deck once a new one replaced them. */

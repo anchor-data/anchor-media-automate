@@ -13,7 +13,8 @@ import {
   DEFAULT_AUTO_RUN_SCHEDULE,
   autoRunSettingsSchema,
   captionWithHashtags,
-  slideFieldsSchema,
+  deckExtrasFrom,
+  parseDeckSlides,
   type Guideline,
   type GuidelineUpsert,
   type Idea,
@@ -21,11 +22,13 @@ import {
   type Post,
   type PostAsset,
   type Reference,
-  type SlideFields
+  type SlideFields,
+  type SlideRole
 } from "@ama/shared";
 import {
   approvePost as approvePostApi,
   createAccountApi,
+  deleteAccountApi,
   createContent,
   createReference,
   deleteMemory,
@@ -43,9 +46,9 @@ import {
   listReferences,
   patchIdea,
   putAutoRun,
-  putCanvaTemplate,
   putGuideline,
   regeneratePost,
+  regeneratePostDesign,
   renderPost,
   runIdeation,
   schedulePost
@@ -89,27 +92,30 @@ interface WorkspaceValue {
   selectIdea: (id: string | null) => void;
   openModal: (modal: ModalState) => void;
   closeModal: () => void;
+  removeAccount: (accountId: string) => Promise<void>;
   addAccount: (
     handle: string,
     schedule: string,
     target: string,
     concept: string,
-    title?: string,
-    canvaTemplateId?: string
-  ) => Promise<void>;
-  saveCanvaTemplate: (accountId: string, templateId: string) => Promise<void>;
+    title?: string
+  ) => Promise<string>;
   /** Turns scheduled idea+content generation on or off for an account. */
   saveAutoRun: (accountId: string, enabled: boolean, schedule: string) => Promise<void>;
   /** Persists a caption edit (hashtags included in the text) to the API; local-only when offline. */
   savePostCaption: (id: string, caption: string) => Promise<void>;
   /** Persists edited slide copy, then re-renders the Canva images. */
   savePostSlides: (id: string, slides: SlideFields) => Promise<void>;
+  /** Remembers an account's page structure after it was saved on the server. */
+  setAccountStructure: (accountId: string, structure: readonly SlideRole[]) => void;
   /** Approves and schedules a draft. Resolves true on success. */
   approvePost: (id: string, scheduledIso?: string) => Promise<boolean>;
   /** Re-export the stored Canva design (preview URLs expire). */
   reloadPostAssets: (id: string) => Promise<void>;
   /** Re-run the creation agent for a draft, optionally with reviewer feedback. */
-  retryGeneration: (id: string, feedback?: string) => Promise<void>;
+  retryGeneration: (id: string, feedback?: string, slideIndex?: number) => Promise<void>;
+  /** Another take on a draft's design (free-text prompt optional) and a fresh Canva render. */
+  redesignPost: (id: string, prompt?: string) => Promise<void>;
   /** Creates content from an idea; resolves to the new post id (null on failure). */
   addDraftFromIdea: (idea: IdeaCandidate) => Promise<string | null>;
   rejectIdea: (ideaId: string, reason: string) => Promise<void>;
@@ -147,7 +153,8 @@ function mapAccount(
     autoRunEnabled: fallback?.autoRunEnabled ?? false,
     systemPrompt: guideline?.systemPrompt || fallback?.systemPrompt || DEFAULT_PROMPT,
     memory: memory.map((m) => m.topicKey),
-    ideaQueue: ideas.filter((i) => i.status === "queued").map((i) => i.title)
+    ideaQueue: ideas.filter((i) => i.status === "queued").map((i) => i.title),
+    structure: fallback?.structure
   };
 }
 
@@ -180,7 +187,7 @@ function errorText(error: unknown): string {
 }
 
 function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[]): MockPost {
-  const slides = slideFieldsSchema.safeParse(post.slidesJson);
+  const deck = parseDeckSlides(post.slidesJson);
   const dateIso = post.scheduledAt ?? post.createdAt;
   return {
     id: post.id,
@@ -206,7 +213,9 @@ function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[
     generationError: post.generationError ?? null,
     assetUrls: assets ? assetUrlsOf(assets) : undefined,
     canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined,
-    slides: slides.success ? slides.data : undefined
+    slides: deck?.slides,
+    structure: deck?.structure,
+    costUsd: deckExtrasFrom(post.slidesJson).costUsd
   };
 }
 
@@ -253,10 +262,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setAccounts((prev) =>
       prev.map((a) =>
         a.id === accountId
-          ? {
-              ...mapAccount(accountId, a.handle, guideItem, mem.items, ideaList.items, a),
-              canvaTemplateId: a.canvaTemplateId
-            }
+          ? mapAccount(accountId, a.handle, guideItem, mem.items, ideaList.items, a)
           : a
       )
     );
@@ -299,9 +305,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                   acc.id === firstId ? bundle.ideas : [],
                   INITIAL_ACCOUNTS.find((a) => a.id === acc.id)
                 ),
-                canvaTemplateId: acc.canvaTemplateId,
                 schedule: acc.autoRunSchedule ?? DEFAULT_AUTO_RUN_SCHEDULE,
-                autoRunEnabled: acc.autoRunEnabled ?? false
+                autoRunEnabled: acc.autoRunEnabled ?? false,
+                structure: acc.design?.structure
               }))
             : INITIAL_ACCOUNTS;
 
@@ -410,17 +416,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       notify,
       refreshAccountSideData,
       refreshPosts,
-      addAccount: async (handle, schedule, target, concept, title, canvaTemplateId) => {
+      addAccount: async (handle, schedule, target, concept, title) => {
         const clean = handle.trim().replace(/^@?/, "@");
         const label = title?.trim() || concept.trim() || target.trim() || "新規アカウント";
         let id = `acc_${Date.now()}`;
         if (apiReady) {
-          if (!canvaTemplateId) throw new Error("Canvaテンプレートを選択してください");
           const created = await createAccountApi({
             name: label,
             instagramHandle: clean,
-            tone: "やさしく実践的",
-            canvaTemplateId
+            tone: "やさしく実践的"
           });
           id = created.item.id;
           // Ideation needs a guideline; empty fields fall back so the account is usable right away.
@@ -445,20 +449,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           schedule,
           systemPrompt: DEFAULT_PROMPT,
           memory: [],
-          ideaQueue: [],
-          canvaTemplateId
+          ideaQueue: []
         };
         setAccounts((prev) => [...prev, account]);
         setActiveAccountId(id);
         setSelectedPostId(null);
         setSelectedIdeaId(null);
+        return id;
       },
-      saveCanvaTemplate: async (accountId, templateId) => {
-        await putCanvaTemplate(accountId, templateId);
-        setAccounts((prev) =>
-          prev.map((a) => (a.id === accountId ? { ...a, canvaTemplateId: templateId } : a))
-        );
+      removeAccount: async (accountId) => {
+        if (apiReady) await deleteAccountApi(accountId);
+        const remaining = accounts.filter((a) => a.id !== accountId);
+        setAccounts(remaining);
+        if (activeAccountId === accountId) setActiveAccountId(remaining[0]?.id ?? "");
+        setSelectedPostId(null);
+        setSelectedIdeaId(null);
       },
+      setAccountStructure: (accountId, structure) =>
+        setAccounts((prev) => prev.map((a) => (a.id === accountId ? { ...a, structure } : a))),
       saveAutoRun: async (accountId, enabled, schedule) => {
         const settings = autoRunSettingsSchema.parse({ enabled, schedule });
         if (apiReady) await putAutoRun(accountId, settings);
@@ -521,12 +529,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           notify(`プレビューの更新に失敗しました: ${errorText(error)}`);
         }
       },
-      retryGeneration: async (id, feedback) => {
+      retryGeneration: async (id, feedback, slideIndex) => {
         try {
-          const { item } = await regeneratePost(id, feedback);
-          replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: undefined }));
+          const { item } = await regeneratePost(id, feedback, slideIndex);
+          // A single-slide run leaves the other slides as they are, so their images stay visible.
+          replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: slideIndex === undefined ? undefined : p.assetUrls }));
         } catch (error) {
           notify(`再生成に失敗しました: ${errorText(error)}`);
+        }
+      },
+      redesignPost: async (id, prompt) => {
+        try {
+          const { item } = await regeneratePostDesign(id, prompt);
+          replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: undefined }));
+        } catch (error) {
+          notify(`デザインの再生成に失敗しました: ${errorText(error)}`);
         }
       },
       addDraftFromIdea: async (idea) => {

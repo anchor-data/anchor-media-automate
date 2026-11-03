@@ -5,14 +5,16 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { slideFieldsSchema, type SlideFields } from "@ama/shared";
 import { Icon } from "../icon";
+import { RegenerateModal } from "../modals/regenerate-modal";
 import { SlideTile } from "../slide-tile";
 import { PageTopbar, Tabs } from "../ui/page";
 import { useWorkspace } from "../workspace-context";
 import { canvaDesignUrl } from "../../lib/canva";
+import { totalCost } from "@ama/shared";
 import type { MockPost } from "../../lib/mock-data";
 import { STAGE_LABEL, stageOf } from "../../lib/post-stage";
 import { formatWaiting } from "../../lib/schedule";
-import { SLIDES, limitOf, slideHeadline, type SlideFieldKey } from "../../lib/slides";
+import { limitOf, slideDefs, slideHeadline, type SlideFieldKey } from "../../lib/slides";
 
 type EditorTab = "slides" | "caption" | "history";
 
@@ -38,8 +40,9 @@ function EditorBody({ post }: { post: MockPost }) {
   const [fields, setFields] = useState<SlideFields | undefined>(post.slides);
   const [caption, setCaption] = useState(post.caption);
   const [saving, setSaving] = useState(false);
-  const [sendingBack, setSendingBack] = useState(false);
-  const [feedback, setFeedback] = useState("");
+  const [regen, setRegen] = useState<"all" | "slide" | null>(null);
+  /** Page being regenerated on its own; the other pages keep showing their current image. */
+  const [singlePage, setSinglePage] = useState<number | null>(null);
 
   // Server copy arrives after generation or re-render; adopt it unless the user is mid-edit.
   const serverSlides = post.slides;
@@ -50,6 +53,10 @@ function EditorBody({ post }: { post: MockPost }) {
   const stage = stageOf(post);
   const editable = post.rawStatus === undefined || post.rawStatus === "draft";
   const generating = post.generationStatus ? post.generationStatus in GENERATING_SET : false;
+  useEffect(() => {
+    if (!generating) setSinglePage(null);
+  }, [generating]);
+  const SLIDES = slideDefs(post.structure);
   const slideDef = SLIDES[active] ?? SLIDES[0]!;
   const dirtySlides = !sameSlides(fields, serverSlides);
   const dirtyCaption = caption !== post.caption;
@@ -88,25 +95,19 @@ function EditorBody({ post }: { post: MockPost }) {
     }
   };
 
-  const regenerateAll = () => {
-    if (window.confirm("文章と画像をもう一度生成します。現在の内容は上書きされます。よろしいですか？")) {
-      void retryGeneration(post.id);
-    }
-  };
-
-  const sendBack = async () => {
-    if (!feedback.trim()) {
-      notify("差し戻しの理由を入力してください");
+  const confirmRegenerate = (instruction: string) => {
+    const scope = regen;
+    setRegen(null);
+    if (scope === "slide") {
+      setSinglePage(active);
+      void retryGeneration(post.id, `スライド${active + 1}(${slideHeadline(fields, active, post.structure)})を次の指示で変更してください: ${instruction}`, active);
       return;
     }
-    await retryGeneration(post.id, feedback.trim());
-    notify("差し戻して再生成を開始しました");
-    setSendingBack(false);
-    setFeedback("");
+    void retryGeneration(post.id, instruction || undefined);
   };
 
   const previewUrl = post.assetUrls?.[active];
-  const headline = slideHeadline(fields, active);
+  const headline = slideHeadline(fields, active, post.structure);
 
   return (
     <>
@@ -120,14 +121,6 @@ function EditorBody({ post }: { post: MockPost }) {
           </span>
         }
       >
-        <span className="muted small">
-          {post.generationStatus === "ready" ? `Canva 反映済み · ${formatWaiting(post.updatedAt ?? post.createdAt)}` : "Canva 未反映"}
-        </span>
-        {editable ? (
-          <button className="btn outline" onClick={() => setSendingBack((v) => !v)}>
-            差し戻す
-          </button>
-        ) : null}
         <button
           className="btn primary"
           disabled={!editable || post.generationStatus !== "ready"}
@@ -140,21 +133,6 @@ function EditorBody({ post }: { post: MockPost }) {
         </button>
       </PageTopbar>
 
-      {sendingBack ? (
-        <div className="banner">
-          <textarea
-            className="textarea"
-            rows={2}
-            aria-label="差し戻しの理由"
-            placeholder="修正してほしい点(エージェントが反映して再生成します)"
-            value={feedback}
-            onChange={(e) => setFeedback(e.target.value)}
-          />
-          <button className="btn primary" onClick={() => void sendBack()}>
-            この内容で再生成
-          </button>
-        </div>
-      ) : null}
       {!editable ? <div className="banner info">この投稿は{STAGE_LABEL[stage]}のため編集できません(下書きのみ編集可能)。</div> : null}
 
       <div className="split editor">
@@ -178,7 +156,7 @@ function EditorBody({ post }: { post: MockPost }) {
               </strong>
               <span className="muted small">4:5 · 1080×1350</span>
             </div>
-            {generating ? (
+            {generating && !(singlePage !== null && singlePage !== active && previewUrl) ? (
               <div className="preview empty-preview">
                 <span className="muted">{GENERATION_LABEL[post.generationStatus ?? "pending"]}</span>
               </div>
@@ -203,7 +181,7 @@ function EditorBody({ post }: { post: MockPost }) {
             <div className="counters small muted">
               {slideDef.fields.map((f) => (
                 <span key={f.key}>
-                  {f.label} {fields?.[f.key]?.length ?? 0}/{limitOf(f.key)}字
+                  {f.label} {fields?.[f.key]?.length ?? 0}/{limitOf(f.key, post.structure)}字
                 </span>
               ))}
               <span className="ok-text strong">合計 {totalChars}字</span>
@@ -220,16 +198,20 @@ function EditorBody({ post }: { post: MockPost }) {
                 </span>
               </div>
               <div className="row gap-8 wrap">
-                <button className="btn outline sm" disabled={!editable || generating} onClick={regenerateAll}>
-                  <Icon name="sparkles" size={12} />
-                  もう一度生成
-                </button>
                 <button
                   className="btn outline sm"
                   disabled={post.generationStatus !== "ready"}
+                  aria-description="プレビュー画像のURLは一定時間で期限切れになります。表示されない場合は押してください。"
                   onClick={() => void reloadPostAssets(post.id)}
                 >
                   プレビューを更新
+                  <span
+                    className="info-tip"
+                    aria-hidden="true"
+                    data-tip="プレビュー画像のURLは一定時間で期限切れになります。表示されない場合は「プレビューを更新」を押してください。"
+                  >
+                    <Icon name="info" size={14} />
+                  </span>
                 </button>
                 {designUrl ? (
                   <a className="btn tint sm" href={designUrl} target="_blank" rel="noreferrer">
@@ -238,9 +220,14 @@ function EditorBody({ post }: { post: MockPost }) {
                   </a>
                 ) : null}
               </div>
-              <p className="muted small">
-                プレビュー画像のURLは一定時間で期限切れになります。表示されない場合は「プレビューを更新」を押してください。「もう一度生成」は文章と画像を上書きします。
-              </p>
+              {post.costUsd && totalCost(post.costUsd) > 0 ? (
+                <p className="small" style={{ margin: 0 }}>
+                  生成コスト <strong>${totalCost(post.costUsd).toFixed(3)}</strong>
+                  <span className="muted">
+                    {" "}(文章 ${post.costUsd.copy.toFixed(3)} · 画像 ${post.costUsd.images.toFixed(3)})
+                  </span>
+                </p>
+              ) : null}
             </div>
           </div>
         </section>
@@ -267,18 +254,21 @@ function EditorBody({ post }: { post: MockPost }) {
                       <span className="label">
                         {f.label}
                         <span className="muted small">
-                          {fields[f.key]?.length ?? 0}/{limitOf(f.key)}
+                          {fields[f.key]?.length ?? 0}/{limitOf(f.key, post.structure)}
                         </span>
                       </span>
                       <input
                         className="input"
                         value={fields[f.key] ?? ""}
-                        maxLength={limitOf(f.key)}
+                        maxLength={limitOf(f.key, post.structure)}
                         disabled={!editable}
                         onChange={(e) => updateField(f.key, e.target.value)}
                       />
                     </label>
                   ))}
+                  <button className="btn primary" disabled={!editable || !dirtySlides || saving} onClick={() => void saveSlides()}>
+                    {saving ? "Canvaに反映中…" : "変更をCanvaに反映"}
+                  </button>
                 </div>
               ) : (
                 <p className="empty">スライドの文章はまだありません。生成が完了すると編集できます。</p>
@@ -320,20 +310,28 @@ function EditorBody({ post }: { post: MockPost }) {
             ) : null}
           </div>
           <div className="detail-foot row gap-8">
-            {tab === "slides" ? (
-              <button className="btn primary grow" disabled={!editable || !dirtySlides || saving} onClick={() => void saveSlides()}>
-                {saving ? "Canvaに反映中…" : "変更をCanvaに反映"}
-              </button>
-            ) : null}
-            <button className="btn outline" disabled={!editable} onClick={() => notify("1枚だけの再生成は準備中です")}>
+            <button className="btn outline" disabled={!editable} onClick={() => setRegen("slide")}>
               このスライドだけ再生成
             </button>
-            <button className="btn outline" disabled={!editable || generating} onClick={regenerateAll}>
+            <button className="btn outline" disabled={!editable || generating} onClick={() => setRegen("all")}>
               {SLIDES.length}枚すべて再生成
             </button>
           </div>
         </aside>
       </div>
+      {regen ? (
+        <RegenerateModal
+          title={regen === "slide" ? `スライド${active + 1}だけ再生成` : `${SLIDES.length}枚すべて再生成`}
+          description={
+            regen === "slide"
+              ? "このスライドの文章を、指示に沿って作り直します。ほかのスライドは変えません。"
+              : "文章と画像をもう一度生成します。現在の内容は上書きされます。"
+          }
+          requireInstruction={regen === "slide"}
+          onConfirm={confirmRegenerate}
+          onClose={() => setRegen(null)}
+        />
+      ) : null}
     </>
   );
 }

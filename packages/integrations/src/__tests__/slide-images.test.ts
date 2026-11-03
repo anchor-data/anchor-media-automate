@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ImageAsset } from "@ama/shared";
 import { IMAGE_ASSET_MAX_BYTES } from "@ama/shared";
-import { resolveSlideImages, validateImageUpload } from "../slide-images";
+import { bytesToDataUrl, resolveSlideImages, validateImageUpload } from "../slide-images";
 
 const asset = (id: string, canvaAssetId: string | null = null): ImageAsset => ({
   id,
@@ -70,5 +70,20 @@ describe("validateImageUpload", () => {
     expect(validateImageUpload({ contentType: "image/gif", size: 100 }).ok).toBe(false);
     expect(validateImageUpload({ contentType: "image/png", size: 0 }).ok).toBe(false);
     expect(validateImageUpload({ contentType: "image/png", size: IMAGE_ASSET_MAX_BYTES + 1 }).ok).toBe(false);
+  });
+});
+
+describe("bytesToDataUrl", () => {
+  it("encodes bytes as a base64 data url with the content type", () => {
+    expect(bytesToDataUrl(new Uint8Array([104, 105]), "image/png")).toBe("data:image/png;base64,aGk=");
+    expect(bytesToDataUrl(new Uint8Array([]), "image/jpeg")).toBe("data:image/jpeg;base64,");
+  });
+
+  it("handles inputs larger than one chunk", () => {
+    const big = new Uint8Array(200_000).map((_, i) => i % 251);
+    const url = bytesToDataUrl(big, "image/webp");
+    const decoded = Uint8Array.from(atob(url.slice("data:image/webp;base64,".length)), (c) => c.charCodeAt(0));
+    expect(decoded.length).toBe(big.length);
+    expect(decoded[199_999]).toBe(big[199_999]);
   });
 });

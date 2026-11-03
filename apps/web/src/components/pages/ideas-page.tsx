@@ -6,7 +6,7 @@ import type { Idea } from "@ama/shared";
 import { PageTopbar } from "../ui/page";
 import { Icon } from "../icon";
 import { useWorkspace } from "../workspace-context";
-import { SLIDES } from "../../lib/slides";
+import { slideDefs } from "../../lib/slides";
 
 const STATUS_LABEL: Record<Idea["status"], string> = {
   queued: "提案",
@@ -27,6 +27,7 @@ export function IdeasPage() {
     ideas,
     memoryItems,
     references,
+    accounts,
     activeAccountId,
     selectedIdeaId,
     selectIdea,
@@ -37,6 +38,7 @@ export function IdeasPage() {
     notify,
     apiReady
   } = useWorkspace();
+  const SLIDES = slideDefs(accounts.find((a) => a.id === activeAccountId)?.structure);
   const [suggesting, setSuggesting] = useState(false);
   const [starting, setStarting] = useState(false);
   const [rejecting, setRejecting] = useState(false);

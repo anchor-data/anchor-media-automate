@@ -122,18 +122,19 @@ Agent の主な役割：
 
 ---
 
-## 5. Canva Autofill API
+## 5. Renderer + Canva (PPTX import / PNG export)
 
-求人データと AI 生成コンテンツをテンプレートに差し込み、Instagram 用の Carousel 画像を生成する。
+> v1.2 で Canva Autofill（ブランドテンプレート方式）から変更。詳細は末尾の「v1.2 Addendum」。
 
-生成画像は Canva 上で管理し、DB には以下の参照情報を保存する。
+投稿のデザインは `packages/renderer`（自前）が決める。アカウントの **DesignSpec**（色・文字・レイアウト）と投稿ごとの文面から PPTX を生成し、Canva に **import**、PNG を **export** する。Canva は「編集できる成果物」と「プレビュー画像」の置き場所で、テンプレートは使わない。
+
+DB には以下の参照情報を保存する。
 
 - Canva Design ID
-- Export URL
-- Template ID
+- Export URL（ページごと）
 - Post ID
 
-MVP では Cloudflare R2 等の追加 Storage は使用しない。
+アカウント画像（アップロード素材・AI イラスト）は Cloudflare R2（`IMAGE_ASSETS`）に置く。参照ファイルは `REFERENCE_FILES`。
 
 ---
 
@@ -165,7 +166,7 @@ OpenAI Agents API
         ↓
 投稿案生成
         ↓
-Canva Autofill API
+Renderer (DesignSpec → PPTX) → Canva import / export
         ↓
 Carousel画像生成
         ↓
@@ -200,7 +201,7 @@ Dashboardで分析
 
 4. **画像生成**
 
-   Canva Autofill API で投稿画像を生成する。
+   アカウントのデザインから PPTX を生成して Canva に取り込み、PNG を書き出す。
 
 5. **承認**
 
@@ -218,7 +219,7 @@ Dashboardで分析
 
 # v1.1 Addendum: AI Ideation (first build scope)
 
-First implementation scope prioritizes **AI content ideation + 8-slide creation**, ending at **approve → schedule**. Instagram publish and metrics remain as in v1 but are not built yet.
+First implementation scope prioritizes **AI content ideation + carousel creation (3-10 pages, default 8)**, ending at **approve → schedule**. Instagram publish and metrics remain as in v1 but are not built yet.
 
 ## Changes relative to the job-centric flow above
 
@@ -247,6 +248,36 @@ Written by Backend on approve/reject (and later edits). Used by the ideation age
 
 - `guidelines`, `references`, `memory_items`, `ideas`
 - `posts`: `idea_id`, `slides_json`, `scheduled_at`, generation fields
-- `post_assets`: `slide_index`, `template_id`
+- `post_assets`: `slide_index`, Canva design id, export URL
 
 Detail: `docs/features/content-ideation.md`, `docs/features/content-creation.md`, `docs/phase-0-feasibility.md`.
+
+---
+
+# v1.2 Addendum: Design, structure and onboarding
+
+Replaces the Canva-template approach. Every post used to look the same because the layout lived in one Canva template; now the look is derived per account and varied per post.
+
+## Flow
+
+1. **Account design** — the owner adds reference Instagram screenshots (a link is only a note, never fetched) and/or a written guideline; the AI derives a `DesignSpec` (theme, type, layout) and stores it in `accounts.design_json`.
+2. **Per-post variation** — `varySpec(spec, seed)` changes accents/decor/underline deterministically per post (`none` | `subtle` | `lively`); contrast is guarded (`ensureReadable`).
+3. **Render** — `@ama/renderer` lays each page out as a flat list of elements, consumed by an HTML preview and by `pptxgenjs` (PPTX, 1080×1350 px).
+4. **Canva** — PPTX → `POST /v1/imports` → editable design; `POST /v1/exports` → PNG per page. Manual edits in Canva are possible; "プレビューを更新" re-exports them.
+5. **Regenerate** — a user who dislikes a post's look types a prompt in the editor; the AI patches that post's spec (`POST /posts/:id/design/regenerate`).
+
+## Slide structure
+
+Account-level list of page roles (`cover`, `empathy`, `point`, `pick`, `cta`), 3-10 pages, inferred from reference screenshots or edited by hand. The creation agent's schema, validation, renderer and editor all derive from it; a post keeps the structure it was created with.
+
+## Onboarding
+
+Adding an account is a 6-step wizard (account → target/concept → design → slide structure → schedule → done). Everything entered is stored on the account and editable later in the **agent settings** and **design** tabs.
+
+## Storage and cost
+
+- `accounts.design_json` = `{spec, guideline, referenceNote, summary, structure, structureSummary, analysisCostUsd, updatedAt}`
+- `posts.slides_json` also carries `structure`, `images`, `design`, `designPrompt`, `costUsd {copy, images, design}`
+- Costs come from token usage × rate table (`openai-cost.ts`); rendering and Canva are free.
+
+Detail: `docs/features/design.md`, `docs/features/onboarding.md`, `docs/features/content-creation.md`.

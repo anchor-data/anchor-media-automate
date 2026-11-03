@@ -12,6 +12,13 @@ const MODEL_RATES = [
   { id: "gpt-4.1", input: 2, cachedInput: 0.5, output: 8 }
 ] as const;
 
+/** Cost of one chat-completions call from its token usage; null for an unknown model or no usage. */
+export function chatCostUsd(model: string, usage: { inputTokens: number; outputTokens: number } | undefined): number | null {
+  const rate = pickRate(MODEL_RATES, model);
+  if (!rate || !usage) return null;
+  return (usage.inputTokens * rate.input + usage.outputTokens * rate.output) / 1_000_000;
+}
+
 type TokenDetails = Record<string, number>;
 
 type RequestUsageLike = {
@@ -89,8 +96,16 @@ function tally(usage: UsageLike): TokenTotals {
   };
 }
 
+/** The rate entry for a model: an exact id, else the longest id it extends (`gpt-4.1-mini-2025-04-14` -> `gpt-4.1-mini`). */
+function pickRate<T extends { id: string }>(rates: readonly T[], model: string): T | undefined {
+  return (
+    rates.find((rate) => rate.id === model) ??
+    [...rates].sort((a, b) => b.id.length - a.id.length).find((rate) => model.startsWith(`${rate.id}-`))
+  );
+}
+
 function ratesFor(model: string) {
-  return MODEL_RATES.find((rate) => model === rate.id || model.startsWith(`${rate.id}-`));
+  return pickRate(MODEL_RATES, model);
 }
 
 /** Cached input is a subset of input tokens and is billed at the cached rate. */
@@ -124,10 +139,15 @@ export function logOpenAiRunCost(label: string, model: unknown, outcome: unknown
 }
 
 /**
- * USD per 1M tokens for the image models. gpt-image-1: text input $5, image input $10, image output $40.
+ * USD per 1M tokens for the image models (text input / image input / image output): gpt-image-1 $5 / $10 / $40,
+ * gpt-image-1-mini $2 / $2.5 / $8, gpt-image-1.5 $5 / $8 / $32.
  * https://developers.openai.com/api/docs/pricing
  */
-const IMAGE_MODEL_RATES = [{ id: "gpt-image-1", textInput: 5, imageInput: 10, output: 40 }] as const;
+const IMAGE_MODEL_RATES = [
+  { id: "gpt-image-1", textInput: 5, imageInput: 10, output: 40 },
+  { id: "gpt-image-1-mini", textInput: 2, imageInput: 2.5, output: 8 },
+  { id: "gpt-image-1.5", textInput: 5, imageInput: 8, output: 32 }
+] as const;
 
 /** Token usage as OpenAI's images endpoints report it. */
 export type OpenAiImageUsage = {
@@ -151,7 +171,7 @@ export function estimateOpenAiImageCost(model: unknown, usage: OpenAiImageUsage 
   const imageInput = Math.min(Math.max(usage.input_tokens_details?.image_tokens ?? 0, 0), input);
   const textInput = usage.input_tokens_details?.text_tokens ?? input - imageInput;
   const output = Math.max(usage.output_tokens ?? 0, 0);
-  const rates = IMAGE_MODEL_RATES.find((rate) => resolved === rate.id || resolved.startsWith(`${rate.id}-`));
+  const rates = pickRate(IMAGE_MODEL_RATES, resolved);
   const usd = rates
     ? (textInput * rates.textInput + imageInput * rates.imageInput + output * rates.output) / 1_000_000
     : null;

@@ -10,7 +10,6 @@ import {
   getImageStyle,
   imageAssetFileUrl,
   listImageAssets,
-  listImageSlots,
   saveImageStyle,
   uploadImageAsset
 } from "../../lib/api";
@@ -50,7 +49,6 @@ export function AssetsPage() {
   const [savedStyle, setSavedStyle] = useState("");
   const [editingStyle, setEditingStyle] = useState(false);
   /** null while loading or unknown; [] means the template has no image fields. */
-  const [slots, setSlots] = useState<readonly string[] | null>(null);
 
   useEffect(() => {
     if (!apiReady || !activeAccountId) return;
@@ -60,9 +58,6 @@ export function AssetsPage() {
         if (!cancelled) setItems(res.items.filter((item) => item.kind !== "generated"));
       })
       .catch((error: unknown) => notify(errorText(error, "画像の読み込みに失敗")));
-    listImageSlots(activeAccountId)
-      .then((res) => !cancelled && setSlots(res.slots))
-      .catch(() => !cancelled && setSlots(null));
     getImageStyle(activeAccountId)
       .then((res) => {
         if (cancelled) return;
@@ -259,17 +254,10 @@ export function AssetsPage() {
                 <p className="muted small">{savedStyle || "未設定です(AI画像生成はオフ)。毎回そろえたい被写体・画風・背景を設定できます。"}</p>
               )}
             </div>
-            {slots !== null && slots.length === 0 && usesImages ? (
-              <div className="note-box danger" role="alert">
-                <strong>テンプレートに画像欄がありません</strong>
-                <p className="small">
-                  s1_image〜s8_image が未設定のため、画像は使われません。Canvaで画像欄を追加し、再公開してください。
-                </p>
-              </div>
-            ) : slots !== null && slots.length > 0 ? (
+            {usesImages ? (
               <div className="note-box">
-                <strong>テンプレートの画像欄</strong>
-                <p className="muted small">{slots.join(", ")}</p>
+                <strong>画像は現在、投稿に配置されません</strong>
+                <p className="muted small">新しいデザインの描画では、アセット画像・AI画像はまだ使われません。今後、レイアウトに対応します。</p>
               </div>
             ) : null}
           </div>

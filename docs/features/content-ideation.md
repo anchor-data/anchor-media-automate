@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Generate Instagram carousel **ideas** with the OpenAI Agents API, using human-uploaded **guideline** and **reference** material plus system **memory**. Operators pick an idea; content creation turns it into an 8-slide draft.
+Generate Instagram carousel **ideas** with the OpenAI Agents API, using human-uploaded **guideline** and **reference** material plus system **memory**. Operators pick an idea; content creation turns it into a draft carousel (the account's page structure, default 8 pages).
 
 求人 (jobs) are optional and not required for ideation.
 
@@ -37,7 +37,7 @@ Uploaded / edited by humans. One active guideline per account.
 | ng_rules | Forbidden claims (内定保証禁止, 前職悪口禁止, …) |
 | cta_policy | CTA wording rules |
 | hashtag_policy | Hashtag count / required tags |
-| job_pick_enabled | Whether slide 7 may use a job |
+| job_pick_enabled | Whether the pick page may use a job |
 | system_prompt | Extra instructions for the agent |
 
 ### Reference (library, per account)
@@ -46,7 +46,7 @@ Uploaded / managed by humans. Structure and examples only — **inspired-by**, n
 
 | kind | Purpose |
 |---|---|
-| `slide_pattern` | Roles of the 8 slides |
+| `slide_pattern` | Roles of the pages of a deck |
 | `hook_pattern` | Hook formulas |
 | `voice_sample` | Tone examples (paraphrased / original) |
 | `doc` | Uploaded company / know-how text |

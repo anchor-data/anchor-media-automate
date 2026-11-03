@@ -1,6 +1,6 @@
 # Build phases: Content Ideation & Creation
 
-First product scope for Anchor Media Automate: **AI content ideation → 8-slide carousel creation → human approve/schedule**. Instagram publish and analytics are deferred.
+First product scope for Anchor Media Automate: **AI content ideation → carousel creation (3-10 pages, default 8) → human approve/schedule**. Instagram publish and analytics are deferred.
 
 Aligned with [`architecture_v1.md`](./architecture_v1.md) (v1.1 AI ideation addendum) and feature specs under [`features/`](./features/).
 
@@ -11,12 +11,13 @@ Aligned with [`architecture_v1.md`](./architecture_v1.md) (v1.1 AI ideation adde
 | Decision | Choice |
 |---|---|
 | Brand style | **Inspired-by** [わかる転職](https://www.instagram.com/wakaru_tensyoku/) — store structure as reference, do not copy IP |
-| Post format | Hybrid **8 slides @ 4:5** (`knowhow` + optional `job_pick` on slide 7) |
+| Post format | Hybrid carousel @ 4:5: **3-10 pages per account** (default 8), `knowhow` + optional `job_pick` on the pick page |
 | Ideation driver | **OpenAI Agents API** always (requires `OPENAI_API_KEY`) |
 | Guideline / reference | **Humans upload/edit via Dashboard** |
 | 求人 | Optional later — **not required** to ideate |
 | Scope end | **承認 → 予約** (no Instagram publish in this scope) |
-| Images | Canva Autofill in production; mock/HTML preview until OAuth works |
+| Images | Own renderer → PPTX → Canva import/export (no templates, no Autofill); uploaded assets + AI illustrations placed in layouts |
+| Design | Derived per account from reference screenshots + written guideline; varied per post; regenerable by prompt |
 
 ---
 
@@ -27,7 +28,8 @@ Aligned with [`architecture_v1.md`](./architecture_v1.md) (v1.1 AI ideation adde
 | **0** Docs & feasibility | Done | Specs + Canva/Agents risk notes |
 | **1** Data foundation | Done | Schema, zod types, seed |
 | **2** Ideation | Done | Mock agent, APIs, dashboard wire |
-| **3** Creation & Canva | Next | 8-slide deck + render + preview |
+| **3** Creation & Canva | Done | Structure-based deck + render + Canva import/export + preview |
+| **3.5** Design & onboarding | Done | Renderer, account design, slide structure, onboarding wizard, cost tracking |
 | **4** Review → schedule | Planned | Edit, approve/reject, memory writes, schedule |
 
 ---
@@ -40,11 +42,10 @@ Aligned with [`architecture_v1.md`](./architecture_v1.md) (v1.1 AI ideation adde
 
 - [`features/content-ideation.md`](./features/content-ideation.md)
 - [`features/content-creation.md`](./features/content-creation.md)
-- [`features/canva-template-spec.md`](./features/canva-template-spec.md)
 - [`phase-0-feasibility.md`](./phase-0-feasibility.md)
 - Architecture **v1.1** addendum in [`architecture_v1.md`](./architecture_v1.md)
 
-**Key finding:** Canva Autofill needs Enterprise + **user OAuth** (not client-credentials alone). Mock Canva covers Phases 1–4 until Connect is wired.
+**Key finding (superseded):** Canva Autofill needs Enterprise + user OAuth. We avoided it entirely: Canva is only used to import a PPTX and export PNGs (user OAuth still required).
 
 ---
 
@@ -55,7 +56,7 @@ Aligned with [`architecture_v1.md`](./architecture_v1.md) (v1.1 AI ideation adde
 **Deliverables**
 
 - `packages/db/sql/schema.sql` — `guidelines`, `content_references`, `memory_items`, `ideas`, extended `posts` / `post_assets` / `agent_runs`
-- `packages/shared` — zod schemas including `slideDeckSchema` (8-slide hybrid)
+- `packages/shared` — zod schemas including `slideDeckSchema` (deck structure of 3-10 pages)
 - `packages/db` — mock + Turso repository CRUD
 - Seed data — wakaru-inspired slide/hook patterns + sample guideline (`acc_001`)
 
@@ -95,22 +96,39 @@ pnpm --filter @ama/db seed:turso    # seed Phase-1 data if missing
 
 ## Phase 3 — Content creation & Canva
 
-**Goal:** Turn a selected idea into an 8-slide draft (copy + images) with progress in the UI.
+**Goal:** Turn a selected idea into a draft (copy + images) with progress in the UI.
 
-**Planned work**
+**Built**
 
-1. `CreationAgent` (OpenAI Agents) → `submit_deck` validated by `slideDeckSchema`
-2. Extend Canva client: multi-field autofill (`s1_*`…`s8_*`), export **all 8** page URLs
-3. `POST /ideas/:id/create` → 202 + poll `generation_status`
-4. Dashboard: carousel preview (HTML from `slides_json` in mock; Canva PNGs when live)
-5. Canva OAuth connect flow if Autofill requires user token (see feasibility doc)
+1. `CreationAgent` (OpenAI Agents) → `submit_deck` validated by `slideDeckSchemaFor(structure)`
+2. `@ama/renderer` builds a PPTX per post; Canva import → export of every page
+3. Idea → post generation with `generation_status` polling and retry
+4. Dashboard: carousel preview (HTML in mock, Canva PNGs when live), editor, "デザインを再生成"
+5. Canva OAuth connect flow (rotating refresh token in `canva_tokens`)
+6. Images (uploads, AI illustrations), cost tracking per post
 
 **Acceptance**
 
-- [ ] Selecting an idea yields exactly 8 slides within char limits
-- [ ] Slide 7 uses job pick or summary fallback
-- [ ] Preview shows 8 pages (mock or Canva)
-- [ ] Failures set `generation_status=failed` with retry
+- [x] Selecting an idea yields the account's pages within char limits
+- [x] The pick page uses job pick or summary fallback
+- [x] Preview shows every page (mock or Canva)
+- [x] Failures set `generation_status=failed` with retry
+
+---
+
+## Phase 3.5 — Design, structure & onboarding
+
+**Goal:** Every post should look different without maintaining Canva templates, and new accounts should be set up in minutes.
+
+**Built**
+
+- `packages/renderer` — DesignSpec, layout, HTML + PPTX output, per-post variation
+- Account design from reference screenshots + guideline (`/accounts/:id/design/analyze`)
+- Slide structure per account, 3-10 pages, inferred or edited (`/accounts/:id/structure/*`)
+- 6-step add-account wizard; results visible in the design and agent-settings tabs
+- Removed: per-post customization, design-rules panel, template variants, Canva templates/autofill
+
+Detail: [`features/design.md`](./features/design.md), [`features/onboarding.md`](./features/onboarding.md).
 
 ---
 
@@ -146,9 +164,7 @@ pnpm --filter @ama/db seed:turso    # seed Phase-1 data if missing
 
 ## Suggested order of work from here
 
-1. **Phase 3** — creation agent (OpenAI Agents) + 8-slide Canva render + preview  
-2. Canva OAuth + real brand template (parallel if Enterprise ready)  
-3. **Phase 4** — approve / reject / schedule + memory writes
+1. **Phase 4** — approve / reject / schedule + memory writes
 
 ---
 
@@ -159,5 +175,6 @@ pnpm --filter @ama/db seed:turso    # seed Phase-1 data if missing
 | [`architecture_v1.md`](./architecture_v1.md) | System architecture + v1.1 ideation |
 | [`features/content-ideation.md`](./features/content-ideation.md) | Ideation product spec |
 | [`features/content-creation.md`](./features/content-creation.md) | Creation / review product spec |
-| [`features/canva-template-spec.md`](./features/canva-template-spec.md) | 8-page field contract |
+| [`features/design.md`](./features/design.md) | Design, renderer, structure, cost |
+| [`features/onboarding.md`](./features/onboarding.md) | Add-account wizard |
 | [`phase-0-feasibility.md`](./phase-0-feasibility.md) | Canva & Agents risks |

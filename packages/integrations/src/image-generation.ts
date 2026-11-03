@@ -2,7 +2,8 @@ import { NotConfiguredError } from "./errors";
 import { estimateOpenAiImageCost, logOpenAiImageCost, type OpenAiImageUsage } from "./openai-cost";
 
 const OPENAI_IMAGES_URL = "https://api.openai.com/v1/images";
-const DEFAULT_MODEL = "gpt-image-1";
+/** gpt-image-1 is no longer served; mini is plenty for flat illustrations and costs about $0.01 per image. */
+const DEFAULT_MODEL = "gpt-image-1-mini";
 const MAX_ATTEMPTS = 3;
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 
@@ -62,7 +63,7 @@ export async function generateSlideImage(input: GenerateSlideImageInput): Promis
         init: {
           method: "POST",
           headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ ...common, prompt: input.prompt })
+          body: JSON.stringify({ ...common, n: 1, prompt: input.prompt })
         }
       };
     }

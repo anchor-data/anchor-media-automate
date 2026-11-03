@@ -102,6 +102,15 @@ describe("estimateOpenAiImageCost", () => {
     expect(estimate).toMatchObject({ textInputTokens: 500, imageInputTokens: 1_000, outputTokens: 1_056 });
   });
 
+  it("prices the current image models (gpt-image-1-mini and gpt-image-1.5)", async () => {
+    const { estimateOpenAiImageCost } = await import("../openai-cost");
+    const usage = { input_tokens: 516, input_tokens_details: { text_tokens: 16, image_tokens: 500 }, output_tokens: 272 };
+    // mini: text $2, image in $2.5, image out $8 per 1M
+    expect(estimateOpenAiImageCost("gpt-image-1-mini", usage)?.usd).toBeCloseTo((16 * 2 + 500 * 2.5 + 272 * 8) / 1_000_000, 10);
+    // 1.5: text $5, image in $8, image out $32 per 1M
+    expect(estimateOpenAiImageCost("gpt-image-1.5", usage)?.usd).toBeCloseTo((16 * 5 + 500 * 8 + 272 * 32) / 1_000_000, 10);
+  });
+
   it("treats all input as text when no breakdown is given, and returns null price for unknown models", async () => {
     const { estimateOpenAiImageCost } = await import("../openai-cost");
     expect(estimateOpenAiImageCost("gpt-image-1", { input_tokens: 1_000, output_tokens: 0 })?.usd).toBeCloseTo(0.005, 10);
@@ -129,5 +138,30 @@ describe("logOpenAiImageCost", () => {
     vi.stubEnv("NODE_ENV", "development");
     logOpenAiImageCost("image s2_image", "gpt-image-1", usage);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("[openai] image s2_image gpt-image-1 $"));
+  });
+});
+
+import { chatCostUsd } from "../openai-cost";
+
+describe("chatCostUsd", () => {
+  it("prices chat completion tokens with the model's rates", () => {
+    // gpt-4.1: $2 in / $8 out per 1M tokens
+    expect(chatCostUsd("gpt-4.1", { inputTokens: 10_000, outputTokens: 1_000 })).toBeCloseTo(0.028, 6);
+    expect(chatCostUsd("gpt-4.1-mini", { inputTokens: 10_000, outputTokens: 1_000 })).toBeCloseTo(0.0056, 6);
+  });
+
+  it("returns null for unknown models or missing usage", () => {
+    expect(chatCostUsd("mystery-model", { inputTokens: 1, outputTokens: 1 })).toBeNull();
+    expect(chatCostUsd("gpt-4.1", undefined)).toBeNull();
+  });
+});
+
+describe("rate lookup", () => {
+  it("prefers the longest matching model id, so snapshots of a cheaper model keep its price", async () => {
+    const { chatCostUsd, estimateOpenAiImageCost } = await import("../openai-cost");
+    const usage = { inputTokens: 1_000_000, outputTokens: 0 };
+    expect(chatCostUsd("gpt-4.1-mini-2025-04-14", usage)).toBeCloseTo(0.4, 10);
+    expect(chatCostUsd("gpt-4.1-2025-04-14", usage)).toBeCloseTo(2, 10);
+    expect(estimateOpenAiImageCost("gpt-image-1-mini-2025-10-06", { input_tokens: 1_000_000, output_tokens: 0 })?.usd).toBeCloseTo(2, 10);
   });
 });

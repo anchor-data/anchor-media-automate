@@ -7,11 +7,22 @@ import {
   type CreationToolContext
 } from "@ama/integrations";
 import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
-import { captionWithHashtags, slideFieldsSchema, slideImagesFrom } from "@ama/shared";
+import {
+  DEFAULT_STRUCTURE,
+  addCost,
+  captionWithHashtags,
+  deckExtrasFrom,
+  parseDeckSlides,
+  slideFieldsSchemaFor,
+  slidesJsonWith
+} from "@ama/shared";
+import { chatCostUsd } from "@ama/integrations";
+import { requestSpecPatch, resolvePostDesign } from "@ama/renderer";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
 import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
 import { renderPost } from "../lib/render";
+import { keepOtherImages, mergeSinglePage } from "../lib/single-slide";
 
 export const creationRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -36,25 +47,48 @@ export async function generatePost(
   env: Bindings,
   postId: string,
   input: CreationRunInput,
-  kind: "creation" | "regenerate"
+  kind: "creation" | "regenerate",
+  /** 1-based page to regenerate on its own; everything else of the post stays as it is. */
+  onlyPage?: number
 ): Promise<void> {
   const repo = createRepo(env);
   try {
     await repo.updatePost(postId, { generationStatus: "generating_copy", generationError: null });
-    const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(input, toolContext(repo));
-    const previousImages = slideImagesFrom((await repo.getPost(postId))?.post.slidesJson);
-    const { images, warnings } = await generateDeckImages(
+    // A regenerated copy keeps the design the post already has.
+    const stored = deckExtrasFrom((await repo.getPost(postId))?.post.slidesJson);
+    // A post keeps its own structure; a new one takes the account's.
+    const structure = stored.structure ?? (await repo.getAccount(input.accountId))?.design?.structure ?? DEFAULT_STRUCTURE;
+    const agentOutput = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run({ ...input, structure }, toolContext(repo));
+    const previousDeck = onlyPage !== undefined ? input.previousDeck : undefined;
+    const deck = previousDeck ? mergeSinglePage(previousDeck, agentOutput.deck, onlyPage!) : agentOutput.deck;
+    const output = { ...agentOutput, deck };
+    const generated = await generateDeckImages(
       repo,
       { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
       input.accountId,
-      output.deck
+      deck
     );
+    const images = previousDeck ? keepOtherImages(stored.images, generated.images, onlyPage!) : generated.images;
+    let costUsd = addCost({ copy: 0, images: 0, design: 0 }, "copy", output.costUsd);
+    costUsd = addCost(costUsd, "images", generated.costUsd);
+    // Regenerated copy keeps what the post already cost; the new run adds to it.
+    costUsd = {
+      copy: stored.costUsd.copy + costUsd.copy,
+      images: stored.costUsd.images + costUsd.images,
+      design: stored.costUsd.design
+    };
     const post = await repo.updatePost(postId, {
       // Hashtags live inside the caption text; the separate list stays empty so there is one source of truth.
-      caption: captionWithHashtags(output.deck.caption, output.deck.hashtags),
-      hashtags: [],
-      slidesJson: { ...output.deck.slides, images },
-      postType: output.deck.postType
+      // A single-page regeneration leaves the caption alone.
+      ...(previousDeck ? {} : { caption: captionWithHashtags(deck.caption, deck.hashtags), hashtags: [] }),
+      slidesJson: slidesJsonWith(deck.slides, {
+        images,
+        design: stored.design,
+        designPrompt: stored.designPrompt,
+        costUsd,
+        structure
+      }),
+      postType: deck.postType
     });
     const run: AgentRun = {
       id: `run_${crypto.randomUUID()}`,
@@ -62,10 +96,12 @@ export async function generatePost(
       createdPostId: postId,
       kind,
       summary: output.summary,
-      outputJson: { reasoning: [...output.reasoning, ...warnings], ideaId: input.ideaId }
+      outputJson: { reasoning: [...output.reasoning, ...generated.warnings], ideaId: input.ideaId, costUsd: output.costUsd ?? null }
     };
     await repo.createAgentRun(run);
-    await discardGeneratedImages(repo, env.IMAGE_ASSETS, previousImages);
+    // Only images that are no longer used go away (a single-page run keeps the other pages' images).
+    const kept = new Set(images.map((image) => image.assetId));
+    await discardGeneratedImages(repo, env.IMAGE_ASSETS, stored.images.filter((image) => !kept.has(image.assetId)));
     if (post) await renderPost(repo, createCanva(env, repo), post, { imageBucket: env.IMAGE_ASSETS });
   } catch (error) {
     // renderPost already marks its own failures; this covers agent failures.
@@ -89,7 +125,6 @@ creationRoutes.post("/ideas/:id/create", async (c) => {
   if (idea.status === "used" || idea.status === "rejected") {
     return c.json({ error: `Idea is ${idea.status}` }, 409);
   }
-
   await repo.updateIdea(idea.id, { status: "selected" });
   const { post } = await repo.createPostDraft({
     accountId: idea.accountId,
@@ -108,7 +143,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
     title: z.string().min(1).optional(),
     caption: z.string().max(2200).optional(),
     hashtags: z.array(z.string()).max(30).optional(),
-    slides: slideFieldsSchema.optional()
+    slides: z.record(z.string(), z.string()).optional()
   });
   const parsed = bodySchema.safeParse(await c.req.json());
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
@@ -119,23 +154,25 @@ creationRoutes.patch("/posts/:id", async (c) => {
   const { post } = detail;
   if (post.status !== "draft") return c.json({ error: `Only draft posts can be edited (is ${post.status})` }, 409);
 
-  const slides = parsed.data.slides ?? slideFieldsSchema.safeParse(post.slidesJson).data;
+  const current = parseDeckSlides(post.slidesJson);
+  const structure = current?.structure ?? deckExtrasFrom(post.slidesJson).structure ?? DEFAULT_STRUCTURE;
+  if (parsed.data.slides) {
+    const checked = slideFieldsSchemaFor(structure).safeParse(parsed.data.slides);
+    if (!checked.success) return c.json({ error: checked.error.flatten() }, 400);
+  }
+  const slides = parsed.data.slides ?? current?.slides;
   if (parsed.data.slides && post.ideaId && post.postType) {
     const idea = await repo.getIdea(post.ideaId);
     const guideline = idea ? await repo.getActiveGuideline(idea.accountId) : null;
     if (idea && guideline) {
-      const deck: SlideDeck = {
+      const deck = {
         postType: post.postType,
         slides: parsed.data.slides,
-        images: slideImagesFrom(post.slidesJson),
+        images: deckExtrasFrom(post.slidesJson).images,
         caption: parsed.data.caption ?? post.caption,
         hashtags: parsed.data.hashtags ?? post.hashtags ?? []
       };
-      const check = validateDeck(deck, {
-        idea,
-        guideline,
-        imageAssets: await repo.listImageAssets(idea.accountId, ["asset", "reference", "generated"])
-      });
+      const check = validateDeck(deck, { idea, guideline, structure });
       if (!check.ok) return c.json({ error: check.errors }, 422);
     }
   }
@@ -144,8 +181,8 @@ creationRoutes.patch("/posts/:id", async (c) => {
     title: parsed.data.title,
     caption: parsed.data.caption,
     hashtags: parsed.data.hashtags,
-    // Edited text keeps the images the agent chose.
-    slidesJson: slides ? { ...slides, images: slideImagesFrom(post.slidesJson) } : undefined,
+    // Edited text keeps the post's design.
+    slidesJson: slides ? slidesJsonWith(slides, deckExtrasFrom(post.slidesJson)) : undefined,
     // Edited slides make the stored assets stale until POST /posts/:id/render.
     ...(parsed.data.slides ? { generationStatus: "pending" as const } : {})
   });
@@ -153,7 +190,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
 });
 
 creationRoutes.post("/posts/:id/regenerate", async (c) => {
-  const bodySchema = z.object({ feedback: z.string().optional() });
+  const bodySchema = z.object({ feedback: z.string().max(1000).optional(), slideIndex: z.number().int().min(0).max(9).optional() });
   const parsed = bodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
@@ -164,7 +201,13 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
   if (!post.ideaId) return c.json({ error: "Post has no source idea to regenerate from" }, 422);
   if (post.status !== "draft") return c.json({ error: `Only draft posts can be regenerated (is ${post.status})` }, 409);
 
-  const previous = slideFieldsSchema.safeParse(post.slidesJson);
+  const previous = parseDeckSlides(post.slidesJson);
+  const extras = deckExtrasFrom(post.slidesJson);
+  const pages = (extras.structure ?? DEFAULT_STRUCTURE).length;
+  const slideIndex = parsed.data.slideIndex;
+  if (slideIndex !== undefined && (slideIndex >= pages || !previous || !post.postType)) {
+    return c.json({ error: "That slide cannot be regenerated on its own" }, 422);
+  }
   await repo.updatePost(post.id, { generationStatus: "pending", generationError: null });
   await runInBackground(
     c,
@@ -176,14 +219,65 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
         accountId: post.accountId,
         feedback: parsed.data.feedback,
         previousDeck:
-          previous.success && post.postType
-            ? { postType: post.postType, slides: previous.data, images: slideImagesFrom(post.slidesJson), caption: post.caption, hashtags: post.hashtags ?? [] }
+          previous && post.postType
+            ? ({ postType: post.postType, slides: previous.slides, images: extras.images, caption: post.caption, hashtags: post.hashtags ?? [] } as SlideDeck)
             : undefined
       },
-      "regenerate"
+      "regenerate",
+      slideIndex === undefined ? undefined : slideIndex + 1
     )
   );
   return c.json({ item: { ...post, generationStatus: "pending" }, mode: repo.mode }, 202);
+});
+
+/**
+ * Another take on this post's design, then a fresh Canva render. With a prompt the free text is turned
+ * into design changes (keeping the account's guideline in mind); without one the account design is
+ * varied again. Text is untouched.
+ */
+creationRoutes.post("/posts/:id/design/regenerate", async (c) => {
+  const parsed = z.object({ prompt: z.string().max(1000).optional() }).safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const repo = createRepo(c.env);
+  const detail = await repo.getPost(c.req.param("id"));
+  if (!detail) return c.json({ error: "Post not found" }, 404);
+  const { post } = detail;
+  if (post.status !== "draft") return c.json({ error: `Only draft posts can be redesigned (is ${post.status})` }, 409);
+  const slides = parseDeckSlides(post.slidesJson);
+  if (!slides) return c.json({ error: "Post has no slides to redesign yet" }, 409);
+  const account = await repo.getAccount(post.accountId);
+  if (!account) return c.json({ error: "Account not found" }, 404);
+
+  const extras = deckExtrasFrom(post.slidesJson);
+  const prompt = parsed.data.prompt?.trim() ?? "";
+  let design;
+  let costUsd = extras.costUsd;
+  try {
+    if (prompt) {
+      const result = await requestSpecPatch({
+        apiKey: c.env.OPENAI_API_KEY,
+        request: prompt,
+        current: resolvePostDesign(account.design?.spec, extras.design, post.id),
+        guideline: account.design?.guideline
+      });
+      design = result.spec;
+      costUsd = addCost(costUsd, "design", result.usage ? chatCostUsd(result.usage.model, result.usage) : null);
+    } else {
+      design = resolvePostDesign(account.design?.spec, null, `${post.id}:${Date.now()}`);
+    }
+  } catch (error) {
+    return c.json({ error: errorMessage(error) }, 502);
+  }
+
+  const updated = await repo.updatePost(post.id, {
+    generationStatus: "pending",
+    generationError: null,
+    slidesJson: slidesJsonWith(slides.slides, { ...extras, design, designPrompt: prompt, costUsd })
+  });
+  if (!updated) return c.json({ error: "Post not found" }, 404);
+  await runInBackground(c, renderPost(repo, createCanva(c.env, repo), updated, { imageBucket: c.env.IMAGE_ASSETS }).catch(() => undefined));
+  return c.json({ item: updated, mode: repo.mode }, 202);
 });
 
 creationRoutes.post("/posts/:id/render", async (c) => {
@@ -195,10 +289,7 @@ creationRoutes.post("/posts/:id/render", async (c) => {
   const detail = await repo.getPost(c.req.param("id"));
   if (!detail) return c.json({ error: "Post not found" }, 404);
   try {
-    await renderPost(repo, createCanva(c.env, repo), detail.post, {
-      reexport: parsed.data.reexport,
-      imageBucket: c.env.IMAGE_ASSETS
-    });
+    await renderPost(repo, createCanva(c.env, repo), detail.post, { reexport: parsed.data.reexport, imageBucket: c.env.IMAGE_ASSETS });
   } catch (error) {
     return c.json({ error: errorMessage(error) }, 502);
   }

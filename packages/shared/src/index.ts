@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { accountDesignSchema } from "./deck-extras";
+import { DEFAULT_STRUCTURE, fieldKeys, imageSlotsFor, slideFieldsSchemaFor, type SlideRole } from "./deck-structure";
 
 export const accountSchema = z.object({
   id: z.string(),
   name: z.string(),
   instagramHandle: z.string(),
-  canvaTemplateId: z.string(),
   tone: z.string(),
   /** Periodic ideation + content creation. Off unless an operator enables it. */
   autoRunEnabled: z.boolean().optional(),
@@ -12,7 +13,9 @@ export const accountSchema = z.object({
   autoRunSchedule: z.string().optional(),
   lastAutoRunAt: z.string().nullable().optional(),
   /** Fixed image rules (subject, style, palette, background) prepended to every generated slide image prompt. */
-  imageStylePrompt: z.string().optional()
+  imageStylePrompt: z.string().optional(),
+  /** The account's design: derived from reference screenshots and a written guideline. */
+  design: accountDesignSchema.optional()
 });
 export type Account = z.infer<typeof accountSchema>;
 
@@ -71,7 +74,7 @@ export const postAssetSchema = z.object({
   postId: z.string(),
   imageUrl: z.string().url(),
   canvaDesignId: z.string().optional(),
-  slideIndex: z.number().int().min(0).max(7).optional(),
+  slideIndex: z.number().int().min(0).max(9).optional(),
   templateId: z.string().optional()
 });
 export type PostAsset = z.infer<typeof postAssetSchema>;
@@ -211,66 +214,17 @@ export const ideationRunRequestSchema = z.object({
 });
 export type IdeationRunRequest = z.infer<typeof ideationRunRequestSchema>;
 
-/**
- * Max characters per autofill field: what fits in the "wakaru carousel template" text boxes
- * (Japanese, about one em per character). Longer copy overflows its box after Canva autofill.
- */
-export const SLIDE_FIELD_LIMITS = {
-  s1_title: 20,
-  s1_sub: 11,
-  s2_head: 6,
-  s2_body: 33,
-  s3_num: 1,
-  s3_head: 4,
-  s3_body: 42,
-  s4_num: 1,
-  s4_head: 5,
-  s4_body: 40,
-  s5_num: 1,
-  s5_head: 6,
-  s5_body: 45,
-  s6_num: 1,
-  s6_head: 5,
-  s6_body: 40,
-  s7_label: 4,
-  s7_head: 5,
-  s7_body: 36,
-  s8_head: 8,
-  s8_cta: 7
-} as const;
+/** Text of one deck: field key (`s3_head`) to copy. The keys depend on the account's structure. */
+export type SlideFields = Record<string, string>;
 
-/** Validated 8-slide deck for Canva autofill (4:5 hybrid). */
-export const slideFieldsSchema = z.object({
-  s1_title: z.string().max(SLIDE_FIELD_LIMITS.s1_title),
-  s1_sub: z.string().max(SLIDE_FIELD_LIMITS.s1_sub),
-  s2_head: z.string().max(SLIDE_FIELD_LIMITS.s2_head),
-  s2_body: z.string().max(SLIDE_FIELD_LIMITS.s2_body),
-  s3_num: z.string().max(SLIDE_FIELD_LIMITS.s3_num),
-  s3_head: z.string().max(SLIDE_FIELD_LIMITS.s3_head),
-  s3_body: z.string().max(SLIDE_FIELD_LIMITS.s3_body),
-  s4_num: z.string().max(SLIDE_FIELD_LIMITS.s4_num),
-  s4_head: z.string().max(SLIDE_FIELD_LIMITS.s4_head),
-  s4_body: z.string().max(SLIDE_FIELD_LIMITS.s4_body),
-  s5_num: z.string().max(SLIDE_FIELD_LIMITS.s5_num),
-  s5_head: z.string().max(SLIDE_FIELD_LIMITS.s5_head),
-  s5_body: z.string().max(SLIDE_FIELD_LIMITS.s5_body),
-  s6_num: z.string().max(SLIDE_FIELD_LIMITS.s6_num),
-  s6_head: z.string().max(SLIDE_FIELD_LIMITS.s6_head),
-  s6_body: z.string().max(SLIDE_FIELD_LIMITS.s6_body),
-  s7_label: z.string().max(SLIDE_FIELD_LIMITS.s7_label),
-  s7_head: z.string().max(SLIDE_FIELD_LIMITS.s7_head),
-  s7_body: z.string().max(SLIDE_FIELD_LIMITS.s7_body),
-  s8_head: z.string().max(SLIDE_FIELD_LIMITS.s8_head),
-  s8_cta: z.string().max(SLIDE_FIELD_LIMITS.s8_cta)
-});
-export type SlideFields = z.infer<typeof slideFieldsSchema>;
+/** The default 8-page structure's fields and limits (existing posts and tests). */
+export const slideFieldsSchema = slideFieldsSchemaFor(DEFAULT_STRUCTURE);
+export const SLIDE_FIELD_LIMITS: Readonly<Record<string, number>> = Object.fromEntries(
+  fieldKeys(DEFAULT_STRUCTURE).map((f) => [f.key, f.max])
+);
 
-/** Optional Canva image fields on the brand template, one per page (s1_image … s8_image). */
-export const SLIDE_IMAGE_SLOTS = Array.from({ length: 8 }, (_, index) => `s${index + 1}_image`) as [
-  string,
-  ...string[]
-];
-export const slideImageSlotSchema = z.enum(SLIDE_IMAGE_SLOTS);
+/** Image field of a page: `s1_image` ... `s10_image`. */
+export const slideImageSlotSchema = z.string().regex(/^s([1-9]|10)_image$/);
 
 /** An uploaded image asset placed into one slide's image field. */
 export const slideImageSchema = z.object({
@@ -330,15 +284,26 @@ export const slideImagePromptSchema = z.object({
 });
 export type SlideImagePrompt = z.infer<typeof slideImagePromptSchema>;
 
-export const slideDeckSchema = z.object({
-  postType: postTypeSchema,
-  slides: slideFieldsSchema,
-  images: z.array(slideImageSchema).max(SLIDE_IMAGE_SLOTS.length).optional(),
-  /** Slides whose image should be AI-generated; resolved into `images` before the post is stored. */
-  imagePrompts: z.array(slideImagePromptSchema).max(SLIDE_IMAGE_SLOTS.length).optional(),
-  caption: z.string().max(2200),
-  hashtags: z.array(z.string()).max(30)
-});
+/** A generated deck for a structure: its text fields, optional images, caption and hashtags. */
+export function slideDeckSchemaFor(structure: readonly SlideRole[]) {
+  return z.object({
+    postType: postTypeSchema,
+    slides: slideFieldsSchemaFor(structure),
+    images: z
+      .array(slideImageSchema.refine((image) => imageSlotsFor(structure).includes(image.slot), "image slot beyond the last page"))
+      .max(structure.length)
+      .optional(),
+    /** Slides whose image should be AI-generated; resolved into `images` before the post is stored. */
+    imagePrompts: z
+      .array(slideImagePromptSchema.refine((prompt) => imageSlotsFor(structure).includes(prompt.slot), "image slot beyond the last page"))
+      .max(structure.length)
+      .optional(),
+    caption: z.string().max(2200),
+    hashtags: z.array(z.string()).max(30)
+  });
+}
+
+export const slideDeckSchema = slideDeckSchemaFor(DEFAULT_STRUCTURE);
 export type SlideDeck = z.infer<typeof slideDeckSchema>;
 
 export const AUTO_RUN_SCHEDULES = ["毎日 18:00", "毎日 12:00", "平日 9:00", "週3回 (火・木・土)"] as const;
@@ -403,3 +368,6 @@ export function captionWithHashtags(caption: string, hashtags: readonly string[]
   if (missing.length === 0) return body;
   return body ? `${body}\n\n${missing.join(" ")}` : missing.join(" ");
 }
+
+export * from "./deck-extras";
+export * from "./deck-structure";

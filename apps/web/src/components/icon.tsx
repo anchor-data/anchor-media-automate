@@ -19,6 +19,7 @@ export type IconName =
   | "paperclip"
   | "chevron-right"
   | "chevron-down"
+  | "chevron-up"
   | "check"
   | "eye"
   | "bookmark"
@@ -32,7 +33,8 @@ export type IconName =
   | "download"
   | "trash"
   | "refresh"
-  | "sliders";
+  | "sliders"
+  | "info";
 
 const PATHS: Record<IconName, ReactNode> = {
   calendar: (
@@ -116,6 +118,7 @@ const PATHS: Record<IconName, ReactNode> = {
   paperclip: <path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />,
   "chevron-right": <path d="M9 18l6-6-6-6" />,
   "chevron-down": <path d="M6 9l6 6 6-6" />,
+  "chevron-up": <path d="M6 15l6-6 6 6" />,
   check: <path d="M20 6L9 17l-5-5" />,
   eye: (
     <>
@@ -137,6 +140,12 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   home: <path d="M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" />,
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 8h.01" />
+    </>
+  ),
   "bar-chart": <path d="M4 20V4M4 20h16M9 16v-5M14 16V8M19 16v-9" />,
   bell: (
     <>

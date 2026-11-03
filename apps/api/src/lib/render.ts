@@ -1,37 +1,29 @@
 import type { Repository } from "@ama/db";
-import { resolveSlideImages, type CanvaClient } from "@ama/integrations";
-import { slideFieldsSchema, slideImagesFrom } from "@ama/shared";
-import type { Post } from "@ama/shared";
+import { bytesToDataUrl, type CanvaClient } from "@ama/integrations";
+import { PPTX_MIME, renderDeckPptx, resolvePostDesign } from "@ama/renderer";
+import { DEFAULT_STRUCTURE, deckExtrasFrom, parseDeckSlides, slidesJsonWith } from "@ama/shared";
+import type { Post, SlideImage } from "@ama/shared";
 import { imageAssetKey } from "./image-assets";
 
-export const EXPECTED_PAGE_COUNT = 8;
-
-/** Canva autofill image fields (slot → Canva asset id) for the images chosen on a post. */
-async function loadSlideImages(
+/**
+ * Image bytes for the images chosen on a post, as data URLs by slot. An image whose file is gone from
+ * storage is skipped: the page then simply renders its no-image layout.
+ */
+async function loadImageData(
   repo: Repository,
-  canva: CanvaClient,
-  post: Post,
-  templateId: string,
-  bucket: R2Bucket | undefined
+  bucket: R2Bucket | undefined,
+  images: readonly SlideImage[]
 ): Promise<Record<string, string>> {
-  const images = slideImagesFrom(post.slidesJson);
-  if (images.length === 0) return {};
-  if (!bucket) throw new Error("Post uses images but image storage (R2 IMAGE_ASSETS) is not configured");
-  return resolveSlideImages({
-    images,
-    assets: await repo.listImageAssets(post.accountId, ["asset", "reference", "generated"]),
-    templateFields: await canva.getTemplateFieldNames(templateId),
-    upload: async (asset) => {
-      const object = await bucket.get(imageAssetKey(asset.id));
-      if (!object) throw new Error(`Image file missing in storage: ${asset.label}`);
-      const { assetId } = await canva.uploadAsset({
-        name: asset.label,
-        bytes: new Uint8Array(await object.arrayBuffer())
-      });
-      await repo.setImageAssetCanvaId(asset.id, assetId);
-      return assetId;
-    }
-  });
+  if (!bucket) return {};
+  const loaded = await Promise.all(
+    images.map(async (image): Promise<[string, string] | null> => {
+      const asset = await repo.getImageAsset(image.assetId);
+      const object = asset ? await bucket.get(imageAssetKey(asset.id)) : null;
+      if (!asset || !object) return null;
+      return [image.slot, bytesToDataUrl(new Uint8Array(await object.arrayBuffer()), asset.contentType)];
+    })
+  );
+  return Object.fromEntries(loaded.filter((entry): entry is [string, string] => entry !== null));
 }
 
 function errorMessage(error: unknown): string {
@@ -39,9 +31,11 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Render a post's slides through Canva and store one post_assets row per page.
- * `reexport` skips autofill and only re-exports the stored design (preview URLs expire,
- * the design id is the source of truth).
+ * Render a post's slides: the post's design + copy become a PPTX, Canva imports it as an editable
+ * design, and Canva's PNG export of each page is stored as the preview (one post_assets row per page).
+ *
+ * `reexport` skips the import and only re-exports the stored design, so edits a human made in Canva
+ * show up here (preview URLs also expire; the design id is the source of truth).
  */
 export async function renderPost(
   repo: Repository,
@@ -57,31 +51,29 @@ export async function renderPost(
     const account = await repo.getAccount(post.accountId);
     if (!account) throw new Error(`Account not found: ${post.accountId}`);
 
+    const slides = parseDeckSlides(post.slidesJson);
     let designId = storedDesignId;
     if (!options.reexport || !designId) {
-      const slides = slideFieldsSchema.safeParse(post.slidesJson);
-      if (!slides.success) throw new Error("Post has no valid slides to render");
-      const images = await loadSlideImages(repo, canva, post, account.canvaTemplateId, options.imageBucket);
-      ({ designId } = await canva.autofill({
-        templateId: account.canvaTemplateId,
-        fields: slides.data,
-        images,
-        title: post.title
-      }));
+      if (!slides) throw new Error("Post has no valid slides to render");
+      const extras = deckExtrasFrom(post.slidesJson);
+      // Chosen once and stored, so later renders and text edits keep the same look.
+      const design = resolvePostDesign(account.design?.spec, extras.design, post.id);
+      if (!extras.design) {
+        await repo.updatePost(post.id, { slidesJson: slidesJsonWith(slides.slides, { ...extras, design, structure: slides.structure }) });
+      }
+      const images = await loadImageData(repo, options.imageBucket, extras.images);
+      const pptx = await renderDeckPptx({ spec: design, fields: slides.slides, handle: account.instagramHandle, images, structure: slides.structure });
+      ({ designId } = await canva.importFile({ title: post.title, bytes: pptx, mimeType: PPTX_MIME }));
     }
 
     const urls = await canva.exportPages(designId);
-    if (urls.length !== EXPECTED_PAGE_COUNT) {
-      throw new Error(`Canva export returned ${urls.length} pages, expected ${EXPECTED_PAGE_COUNT}`);
+    const expectedPages = slides?.structure.length ?? DEFAULT_STRUCTURE.length;
+    if (urls.length !== expectedPages) {
+      throw new Error(`Canva export returned ${urls.length} pages, expected ${expectedPages}`);
     }
     await repo.replacePostAssets(
       post.id,
-      urls.map((imageUrl, slideIndex) => ({
-        imageUrl,
-        slideIndex,
-        canvaDesignId: designId,
-        templateId: account.canvaTemplateId
-      }))
+      urls.map((imageUrl, slideIndex) => ({ imageUrl, slideIndex, canvaDesignId: designId }))
     );
     await repo.updatePost(post.id, { generationStatus: "ready", generationError: null });
   } catch (error) {

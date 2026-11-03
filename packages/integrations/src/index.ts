@@ -20,7 +20,7 @@ export {
   type IdeationToolContext
 } from "./ideation";
 import { NotConfiguredError } from "./errors";
-export { estimateOpenAiImageCost, logOpenAiImageBatchCost, logOpenAiImageCost } from "./openai-cost";
+export { chatCostUsd, estimateOpenAiCost, estimateOpenAiImageCost, logOpenAiImageBatchCost, logOpenAiImageCost } from "./openai-cost";
 export {
   composeImagePrompt,
   generateSlideImage,
@@ -29,16 +29,12 @@ export {
   type ReferenceImage
 } from "./image-generation";
 export { extractReferencePatterns, type ExtractReferenceInput } from "./reference-extract";
-export { resolveSlideImages, validateImageUpload, type ImageUploadCheck } from "./slide-images";
+export { bytesToDataUrl, resolveSlideImages, validateImageUpload, type ImageUploadCheck } from "./slide-images";
 export {
   CanvaApiClient,
   MockCanvaClient,
   createCanvaClient,
-  REQUIRED_TEMPLATE_FIELDS,
-  missingTemplateFields,
   resolveCanvaDesignId,
-  toAutofillData,
-  type CanvaBrandTemplate,
   type CanvaDraftDesign,
   type CanvaSharedState,
   type CanvaClient,
@@ -47,21 +43,6 @@ export {
   type CanvaThumbnail,
   type CanvaTokenStore
 } from "./canva";
-export { buildDraftPdf } from "./draft-pdf";
-export {
-  DEFAULT_TEMPLATE_STRUCTURE,
-  inferTemplateStructure,
-  parseTemplateStructure,
-  structureFieldNames,
-  type TemplateStructure
-} from "./template-structure";
-export {
-  buildTemplateBrief,
-  parseInstagramHandle,
-  type TemplateBrief,
-  type TemplateBriefInput,
-  type TemplateBriefPage
-} from "./template-brief";
 export {
   MockCreationAgent,
   OpenAICreationAgent,
@@ -242,3 +223,4 @@ export function createInstagramClient(options: IntegrationOptions): InstagramCli
   }
   return new MockInstagramClient();
 }
+export { parseInstagramHandle } from "./instagram";

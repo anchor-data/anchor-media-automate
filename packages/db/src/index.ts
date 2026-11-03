@@ -1,6 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 import type {
   Account,
+  AccountDesign,
   AgentRun,
   AutoRunSettings,
   Guideline,
@@ -19,7 +20,12 @@ import type {
   ReferenceCreate,
   ReferenceKind
 } from "@ama/shared";
-import { DEFAULT_AUTO_RUN_SCHEDULE, IMAGE_ASSET_CONTENT_TYPES, IMAGE_ASSET_KINDS } from "@ama/shared";
+import {
+  DEFAULT_AUTO_RUN_SCHEDULE,
+  IMAGE_ASSET_CONTENT_TYPES,
+  IMAGE_ASSET_KINDS,
+  accountDesignSchema
+} from "@ama/shared";
 
 /** What the dashboard library shows and the agent can use: everything except per-post generated images. */
 const LIBRARY_IMAGE_KINDS: readonly ImageAsset["kind"][] = ["asset", "reference"];
@@ -46,9 +52,11 @@ export interface Repository {
   getAccount(accountId: string): Promise<Account | null>;
   listAccounts(): Promise<Account[]>;
   createAccount(account: Account): Promise<Account>;
-  updateAccountTemplate(accountId: string, canvaTemplateId: string): Promise<Account | null>;
+  /** Delete an account with everything that belongs to it (posts, ideas, guideline, references, assets, memory, runs). */
+  deleteAccount(accountId: string): Promise<boolean>;
   updateAccountAutoRun(accountId: string, settings: AutoRunSettings): Promise<Account | null>;
   updateAccountImageStyle(accountId: string, imageStylePrompt: string): Promise<Account | null>;
+  updateAccountDesign(accountId: string, design: AccountDesign): Promise<Account | null>;
   markAutoRun(accountId: string, at: string): Promise<void>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
@@ -169,17 +177,17 @@ class MockRepository implements Repository {
   async listAccounts() {
     return this.accounts;
   }
-  async updateAccountTemplate(accountId: string, canvaTemplateId: string) {
-    const index = this.accounts.findIndex((a) => a.id === accountId);
-    if (index < 0) return null;
-    const updated = { ...this.accounts[index]!, canvaTemplateId };
-    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
-    return updated;
-  }
   async updateAccountImageStyle(accountId: string, imageStylePrompt: string) {
     const index = this.accounts.findIndex((a) => a.id === accountId);
     if (index < 0) return null;
     const updated = { ...this.accounts[index]!, imageStylePrompt };
+    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
+    return updated;
+  }
+  async updateAccountDesign(accountId: string, design: AccountDesign) {
+    const index = this.accounts.findIndex((a) => a.id === accountId);
+    if (index < 0) return null;
+    const updated = { ...this.accounts[index]!, design };
     this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
     return updated;
   }
@@ -196,6 +204,20 @@ class MockRepository implements Repository {
   }
   async markAutoRun(accountId: string, at: string) {
     this.accounts = this.accounts.map((a) => (a.id === accountId ? { ...a, lastAutoRunAt: at } : a));
+  }
+  async deleteAccount(accountId: string) {
+    if (!this.accounts.some((a) => a.id === accountId)) return false;
+    const postIds = new Set(this.posts.filter((p) => p.accountId === accountId).map((p) => p.id));
+    this.accounts = this.accounts.filter((a) => a.id !== accountId);
+    this.posts = this.posts.filter((p) => !postIds.has(p.id));
+    this.assets = this.assets.filter((a) => !postIds.has(a.postId));
+    this.agentRuns = this.agentRuns.filter((r) => r.accountId !== accountId);
+    this.guidelines = this.guidelines.filter((g) => g.accountId !== accountId);
+    this.references = this.references.filter((r) => r.accountId !== accountId);
+    this.memory = this.memory.filter((m) => m.accountId !== accountId);
+    this.ideas = this.ideas.filter((i) => i.accountId !== accountId);
+    this.imageAssets = this.imageAssets.filter((i) => i.accountId !== accountId);
+    return true;
   }
   async createAccount(account: Account) {
     if (this.accounts.some((a) => a.id === account.id)) {
@@ -552,18 +574,21 @@ class TursoRepository implements Repository {
     return result.rows.map(mapAccountRow);
   }
 
-  async updateAccountTemplate(accountId: string, canvaTemplateId: string) {
-    await this.client.execute({
-      sql: "UPDATE accounts SET canva_template_id = ?, updated_at = ? WHERE id = ?",
-      args: [canvaTemplateId, nowIso(), accountId]
-    });
-    return this.getAccount(accountId);
-  }
 
   async updateAccountImageStyle(accountId: string, imageStylePrompt: string) {
     await this.client.execute({
       sql: "UPDATE accounts SET image_style_prompt = ?, updated_at = ? WHERE id = ?",
       args: [imageStylePrompt, nowIso(), accountId]
+    });
+    return this.getAccount(accountId);
+  }
+
+
+
+  async updateAccountDesign(accountId: string, design: AccountDesign) {
+    await this.client.execute({
+      sql: "UPDATE accounts SET design_json = ?, updated_at = ? WHERE id = ?",
+      args: [JSON.stringify(design), nowIso(), accountId]
     });
     return this.getAccount(accountId);
   }
@@ -583,6 +608,27 @@ class TursoRepository implements Repository {
     });
   }
 
+  async deleteAccount(accountId: string) {
+    if (!(await this.getAccount(accountId))) return false;
+    const byPost = "SELECT id FROM posts WHERE account_id = ?";
+    await this.client.batch(
+      [
+        { sql: `DELETE FROM post_assets WHERE post_id IN (${byPost})`, args: [accountId] },
+        { sql: `DELETE FROM post_insights WHERE post_id IN (${byPost})`, args: [accountId] },
+        { sql: "DELETE FROM agent_runs WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM posts WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM ideas WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM memory_items WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM content_references WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM image_assets WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM guidelines WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM accounts WHERE id = ?", args: [accountId] }
+      ],
+      "write"
+    );
+    return true;
+  }
+
   async createAccount(account: Account) {
     const existing = await this.getAccount(account.id);
     if (existing) return existing;
@@ -594,7 +640,7 @@ class TursoRepository implements Repository {
         account.id,
         account.name,
         account.instagramHandle,
-        account.canvaTemplateId,
+        "",
         account.tone,
         t,
         t
@@ -1204,17 +1250,27 @@ class TursoRepository implements Repository {
   }
 }
 
+/** Tolerates NULL/legacy/invalid JSON: an account without a design yet. */
+function parseDesign(raw: unknown): AccountDesign {
+  try {
+    const parsed = accountDesignSchema.safeParse(JSON.parse(typeof raw === "string" && raw ? raw : "{}"));
+    return parsed.success ? parsed.data : accountDesignSchema.parse({});
+  } catch {
+    return accountDesignSchema.parse({});
+  }
+}
+
 function mapAccountRow(row: Record<string, unknown>): Account {
   return {
     id: String(row.id),
     name: String(row.name),
     instagramHandle: String(row.instagram_handle),
-    canvaTemplateId: String(row.canva_template_id),
     tone: String(row.tone),
     autoRunEnabled: sqliteBool(row.auto_run_enabled),
     autoRunSchedule: row.auto_run_schedule ? String(row.auto_run_schedule) : DEFAULT_AUTO_RUN_SCHEDULE,
     lastAutoRunAt: row.last_auto_run_at == null ? null : String(row.last_auto_run_at),
-    imageStylePrompt: row.image_style_prompt ? String(row.image_style_prompt) : ""
+    imageStylePrompt: row.image_style_prompt ? String(row.image_style_prompt) : "",
+    design: parseDesign(row.design_json)
   };
 }
 

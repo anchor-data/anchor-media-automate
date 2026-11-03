@@ -31,6 +31,17 @@ export async function resolveSlideImages(input: {
   return resolved;
 }
 
+const BASE64_CHUNK = 0x8000;
+
+/** Image bytes as a base64 data URL (chunked so large images do not overflow the call stack). */
+export function bytesToDataUrl(bytes: Uint8Array, contentType: string): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += BASE64_CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + BASE64_CHUNK));
+  }
+  return `data:${contentType};base64,${btoa(binary)}`;
+}
+
 export type ImageUploadCheck =
   | { ok: true; contentType: (typeof IMAGE_ASSET_CONTENT_TYPES)[number] }
   | { ok: false; error: string };
