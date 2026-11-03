@@ -23,7 +23,7 @@ export function DesignPage() {
 
   return (
     <>
-      <PageTopbar title="デザイン" />
+      <PageTopbar title="デザインテンプレート" />
       <div className="split">
         <section className="pane list-pane wide pad-32">
           <div className="stack gap-16">

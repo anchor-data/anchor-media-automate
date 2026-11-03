@@ -21,8 +21,7 @@ export function AgentAccountsPage() {
   const {
     accounts,
     activeAccountId,
-    setActiveAccountId,
-    guideline,
+      guideline,
     memoryItems,
     integrations,
     apiReady,
@@ -31,20 +30,11 @@ export function AgentAccountsPage() {
     removeMemory,
     notify
   } = useWorkspace();
-  // The sidebar opens only after an account is picked from the list.
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const active = accounts.find((a) => a.id === selectedId) ?? null;
+  const active = accounts.find((a) => a.id === activeAccountId) ?? accounts[0] ?? null;
   const [tab, setTab] = useState<SideTab>("agent");
   const [savingRun, setSavingRun] = useState(false);
 
   const instagramConnected = integrations?.instagram ?? false;
-
-  /** Opening an account always starts on the エージェント設定 tab. */
-  const selectAccount = (id: string) => {
-    setActiveAccountId(id);
-    setSelectedId(id);
-    setTab("agent");
-  };
 
   const updateAutoRun = async (enabled: boolean, schedule: string) => {
     if (!active) return;
@@ -61,7 +51,7 @@ export function AgentAccountsPage() {
 
   return (
     <>
-      <PageTopbar title="アカウント">
+      <PageTopbar title="アカウント管理">
         <button className="btn primary" onClick={() => openModal({ kind: "add-account" })}>
           <Icon name="plus" size={14} />
           アカウントを追加
@@ -69,76 +59,31 @@ export function AgentAccountsPage() {
       </PageTopbar>
       <div className="split">
         <section className="pane grow pad-32">
-          <div className="page-head tight">
-            <div>
-              <h1>運用アカウント</h1>
-              <p className="muted small">アカウントを選ぶと、右側でエージェント設定・ペルソナ・ガイドライン・Instagram連携を管理できます</p>
-            </div>
-          </div>
-          {accounts.length === 0 ? (
+          {!active ? (
             <p className="empty">アカウントがありません。「アカウントを追加」から作成してください。</p>
           ) : (
-            <ul className="account-table">
-              {accounts.map((account) => {
-                const isActive = account.id === selectedId;
-                return (
-                  <li key={account.id} className={isActive ? "active" : undefined}>
-                    <button
-                      className="account-row-btn"
-                      aria-pressed={isActive}
-                      onClick={() => selectAccount(account.id)}
-                    >
-                      <span className="avatar lg">{account.handle.replace("@", "").slice(0, 1).toUpperCase()}</span>
-                      <span className="stack gap-2 grow account-name">
-                        <strong className="ellipsis">{account.handle}</strong>
-                        <span className="muted small ellipsis">
-                          {account.title} · {account.schedule}
-                        </span>
-                      </span>
-                      <span className="stack gap-2 col-status">
-                        {/* MOCK: per-account token state; the API only reports whether Instagram credentials exist. */}
-                        <strong className={`small ${instagramConnected ? "ok-text" : "warn-text"}`}>
-                          {instagramConnected ? "接続済み" : "未接続"}
-                        </strong>
-                        <span className="muted small">{instagramConnected ? "トークン期限 あと54日" : "公開はできません"}</span>
-                      </span>
-                      <span className="stack gap-2 col-guide">
-                        <strong className="small">ガイドライン {isActive && guideline ? `v${guideline.version}` : "—"}</strong>
-                        <Link className="link small" href="/design">デザイン</Link>
-                      </span>
-                      <span className="link small">
-                        {isActive ? "選択中" : "設定"}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-
-        {active ? (
-        <aside className="pane detail-pane wide-detail" aria-label="アカウント設定">
-          <>
-              <div className="pad-tabs">
-                <div className="row between pad-b-8">
-                  <span className="eyebrow">{active.handle}</span>
-                  <button className="icon-btn" aria-label="設定を閉じる" onClick={() => setSelectedId(null)}>
-                    <Icon name="x" size={14} />
-                  </button>
+            <div className="stack gap-16" style={{ maxWidth: 720 }}>
+              <div className="page-head tight">
+                <div>
+                  <h1>{active.handle}</h1>
+                  <p className="muted small">
+                    {active.title} · 別のアカウントは左上のメニューで切り替えます
+                    <span className={`small ${instagramConnected ? "ok-text" : "warn-text"}`}>{" · "}Instagram {instagramConnected ? "接続済み" : "未接続"}</span>
+                    {guideline ? ` · ガイドライン v${guideline.version}` : ""}
+                  </p>
                 </div>
-                <Tabs
-                  label="アカウント設定"
-                  value={tab}
-                  onChange={setTab}
-                  options={[
-                    { id: "agent", label: "エージェント設定" },
-                    { id: "profile", label: "ペルソナ・ガイドライン" },
-                    { id: "instagram", label: "Instagram連携" }
-                  ]}
-                />
               </div>
-              <div className="detail-scroll">
+              <Tabs
+                label="アカウント設定"
+                value={tab}
+                onChange={setTab}
+                options={[
+                  { id: "agent", label: "エージェント設定" },
+                  { id: "profile", label: "ペルソナ・ガイドライン" },
+                  { id: "instagram", label: "Instagram連携" }
+                ]}
+              />
+              <div>
                 {tab === "agent" ? (
                   <div className="stack gap-24">
                     <div className="stack gap-8">
@@ -226,17 +171,16 @@ export function AgentAccountsPage() {
                 ) : null}
               </div>
               {tab === "instagram" ? (
-                <div className="detail-foot stack gap-8">
+                <div className="stack gap-8">
                   <button className="btn primary block" onClick={() => notify("Instagram連携はまだ利用できません(モック)")}>
                     Facebookで認証する
                   </button>
                   <p className="muted small center">パスワードはこのシステムに保存されません。認証はいつでも取り消せます。</p>
                 </div>
               ) : null}
-          </>
-
-        </aside>
-        ) : null}
+            </div>
+          )}
+        </section>
       </div>
     </>
   );
