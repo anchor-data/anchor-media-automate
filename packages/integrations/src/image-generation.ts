@@ -14,8 +14,6 @@ export type GenerateSlideImageInput = {
   /** Reference images sent with every request so the subject and style stay consistent. */
   references: readonly ReferenceImage[];
   model?: string;
-  /** Output size; defaults to a square. Backgrounds use portrait. */
-  size?: "1024x1024" | "1024x1536";
   /** Names this image in the dev cost log, e.g. "image s2_image". */
   label?: string;
   fetchImpl?: typeof fetch;
@@ -45,23 +43,6 @@ export function composeImagePrompt(stylePrompt: string, scene: string): string {
     .join("\n");
 }
 
-/**
- * Prompt for a full-bleed carousel background. It must stay calm in the middle so slide text
- * remains legible; the variationSeed only nudges composition so equal plans still differ.
- */
-export function composeBackgroundPrompt(plan: { palette: string; motif: string }, variationSeed?: string | null): string {
-  return [
-    "Abstract full-bleed background for an Instagram carousel page, portrait 4:5.",
-    `Color palette: ${plan.palette.trim()}.`,
-    `Motif and style: ${plan.motif.trim()}.`,
-    "Keep the central area calm and low-contrast so overlaid text stays legible; put visual interest near the edges.",
-    "No text, letters, numbers, logos, people or watermarks.",
-    variationSeed ? `Composition variation: ${variationSeed}.` : null
-  ]
-    .filter((part): part is string => part !== null)
-    .join("\n");
-}
-
 function fromBase64(value: string): Uint8Array {
   return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
 }
@@ -74,7 +55,7 @@ export async function generateSlideImage(input: GenerateSlideImageInput): Promis
   const model = input.model ?? DEFAULT_MODEL;
 
   const buildRequest = (): { url: string; init: RequestInit } => {
-    const common = { model, background: "auto", output_format: "png", size: input.size ?? "1024x1024", n: "1" };
+    const common = { model, background: "auto", output_format: "png", size: "1024x1024", n: "1" };
     if (input.references.length === 0) {
       return {
         url: `${OPENAI_IMAGES_URL}/generations`,

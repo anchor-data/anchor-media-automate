@@ -8,19 +8,21 @@ import {
 } from "@ama/integrations";
 import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
 import {
-  backgroundSlotsIn,
   captionWithHashtags,
   checkCustomization,
   deckExtrasFrom,
   diffSlides,
+  pickTemplateVariant,
   postCustomizationSchema,
   slideFieldsSchema,
   slidesJsonWith,
+  templateCandidates,
+  type Account,
   type PostCustomization
 } from "@ama/shared";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
-import { discardGeneratedImages, generateBackground, generateDeckImages } from "../lib/generate-images";
+import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
 import { renderPost } from "../lib/render";
 
 export const creationRoutes = new Hono<{ Bindings: Bindings }>();
@@ -54,37 +56,28 @@ export async function generatePost(
     // The customization is stored on the post; the account's design rules are read fresh every run.
     const stored = deckExtrasFrom((await repo.getPost(postId))?.post.slidesJson);
     const account = await repo.getAccount(input.accountId);
-    const backgroundOn = await backgroundsAvailable(env, repo, account?.canvaTemplateId);
     const runInput: CreationRunInput = {
       ...input,
-      background: backgroundOn ? { recent: await recentBackgrounds(repo, input.accountId) } : undefined,
       customization: input.customization ?? stored.customization,
       designRules: input.designRules ?? account?.designRules
     };
     const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(runInput, toolContext(repo));
-    const previousImages = [...stored.images, ...(stored.background ? [stored.background] : [])];
+    const previousImages = stored.images;
     const { images, warnings } = await generateDeckImages(
       repo,
       { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
       input.accountId,
       output.deck
     );
-    const bg = output.deck.background
-      ? await generateBackground(
-          repo,
-          { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
-          input.accountId,
-          output.deck.background,
-          (runInput.customization ?? stored.customization).variationSeed
-        )
-      : { background: null, warnings: [] };
+    // Each generation picks the layout variant least recently used, so consecutive posts look different.
+    const templateId = account ? await chooseTemplateId(repo, account) : null;
     const post = await repo.updatePost(postId, {
       // Hashtags live inside the caption text; the separate list stays empty so there is one source of truth.
       caption: captionWithHashtags(output.deck.caption, output.deck.hashtags),
       hashtags: [],
       slidesJson: slidesJsonWith(output.deck.slides, {
         images,
-        background: bg.background,
+        templateId,
         customization: runInput.customization ?? stored.customization,
         report: {
           at: new Date().toISOString(),
@@ -103,7 +96,7 @@ export async function generatePost(
       createdPostId: postId,
       kind,
       summary: output.summary,
-      outputJson: { reasoning: [...output.reasoning, ...warnings, ...bg.warnings], ideaId: input.ideaId }
+      outputJson: { reasoning: [...output.reasoning, ...warnings, ...(templateId ? [`template=${templateId}`] : [])], ideaId: input.ideaId }
     };
     await repo.createAgentRun(run);
     await discardGeneratedImages(repo, env.IMAGE_ASSETS, previousImages);
@@ -114,27 +107,19 @@ export async function generatePost(
   }
 }
 
-const RECENT_BACKGROUND_COUNT = 3;
+const RECENT_TEMPLATE_WINDOW = 10;
 
-/** Backgrounds only make sense when the template has `sN_bg` fields and images can be stored. */
-async function backgroundsAvailable(env: Bindings, repo: Repository, templateId: string | undefined): Promise<boolean> {
-  if (!templateId || !env.IMAGE_ASSETS) return false;
-  try {
-    return backgroundSlotsIn(await createCanva(env, repo).getTemplateFieldNames(templateId)).length > 0;
-  } catch {
-    // Unreadable template: render will report it; generation continues without a background.
-    return false;
-  }
-}
-
-/** Palette + motif of the account's latest posts, newest first, so the next one can differ. */
-async function recentBackgrounds(repo: Repository, accountId: string) {
-  const posts = await repo.listPostsByAccount(accountId, 10);
-  return posts
-    .map((post) => deckExtrasFrom(post.slidesJson).background)
-    .filter((background): background is NonNullable<typeof background> => background !== null)
-    .slice(0, RECENT_BACKGROUND_COUNT)
-    .map(({ palette, motif }) => ({ palette, motif }));
+/**
+ * Brand template for the next post: the base template or one of the account's variants, least
+ * recently used first. Returns null when the account has no variants (the base template is used).
+ */
+async function chooseTemplateId(repo: Repository, account: Account): Promise<string | null> {
+  const candidates = templateCandidates(account.canvaTemplateId, account.templateVariants);
+  if (candidates.length < 2) return null;
+  const recent = (await repo.listPostsByAccount(account.id, RECENT_TEMPLATE_WINDOW)).map(
+    (post) => deckExtrasFrom(post.slidesJson).templateId ?? account.canvaTemplateId
+  );
+  return pickTemplateVariant(candidates, recent)?.id ?? null;
 }
 
 /** Workers: keep running after the 202 response. Local/test runtimes without executionCtx run inline. */

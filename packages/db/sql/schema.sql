@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   last_auto_run_at TEXT,
   image_style_prompt TEXT NOT NULL DEFAULT '',
   design_rules_json TEXT NOT NULL DEFAULT '{}',
+  template_variants_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );

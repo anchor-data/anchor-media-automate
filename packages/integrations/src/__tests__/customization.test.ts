@@ -171,30 +171,75 @@ describe("slides_json extras", () => {
   });
 });
 
-import { BACKGROUND_SLOTS, backgroundSlotsIn, slideDeckSchema as deckSchema } from "@ama/shared";
+import { pickTemplateVariant, templateVariantSchema, type TemplateVariant } from "@ama/shared";
 
-describe("background plan", () => {
-  it("lists the template's background slots in page order", () => {
-    expect(BACKGROUND_SLOTS).toHaveLength(8);
-    expect(backgroundSlotsIn(["s2_bg", "s1_title", "s1_bg", "s9_bg"])).toEqual(["s1_bg", "s2_bg"]);
-    expect(backgroundSlotsIn(["s1_title"])).toEqual([]);
+const variant = (id: string): TemplateVariant => ({ id, name: `variant ${id}`, description: "" });
+const variants = [variant("A"), variant("B"), variant("C")];
+
+describe("pickTemplateVariant", () => {
+  it("returns null without variants", () => {
+    expect(pickTemplateVariant([], [], () => 0)).toBeNull();
   });
 
-  it("accepts a background on a deck and round-trips it in slides_json", () => {
-    const parsed = deckSchema.safeParse({
-      postType: "knowhow",
-      slides: slides(),
-      caption: "c",
-      hashtags: [],
-      background: { palette: "navy and orange", motif: "circles" }
-    });
-    expect(parsed.success).toBe(true);
-    const json = slidesJsonWith(slides(), {
-      images: [],
-      customization: empty,
-      background: { palette: "navy and orange", motif: "circles", assetId: "bg1" }
-    });
-    expect(deckExtrasFrom(json).background).toEqual({ palette: "navy and orange", motif: "circles", assetId: "bg1" });
-    expect(deckExtrasFrom(null).background).toBeNull();
+  it("returns the only variant", () => {
+    expect(pickTemplateVariant([variant("A")], ["A", "A"], () => 0.9)?.id).toBe("A");
+  });
+
+  it("prefers a variant that was never used", () => {
+    expect(pickTemplateVariant(variants, ["A", "B"], () => 0)?.id).toBe("C");
+  });
+
+  it("picks the least recently used when all were used (recent ids are newest first)", () => {
+    expect(pickTemplateVariant(variants, ["A", "B", "C"], () => 0)?.id).toBe("C");
+    expect(pickTemplateVariant(variants, ["C", "B", "A"], () => 0)?.id).toBe("A");
+  });
+
+  it("never repeats the most recent one when there is a choice", () => {
+    for (const roll of [0, 0.34, 0.67, 0.99]) {
+      expect(pickTemplateVariant(variants, ["B"], () => roll)?.id).not.toBe("B");
+    }
+  });
+
+  it("breaks ties with the random source", () => {
+    const picks = new Set([0, 0.99].map((roll) => pickTemplateVariant(variants, [], () => roll)?.id));
+    expect(picks.size).toBe(2);
+  });
+
+  it("ignores recent ids that are no longer registered", () => {
+    expect(pickTemplateVariant(variants, ["gone", "A"], () => 0)?.id).not.toBe("A");
+  });
+});
+
+describe("templateVariantSchema and slides_json", () => {
+  it("requires an id and a name", () => {
+    expect(templateVariantSchema.safeParse({ id: "EAHZ", name: "A", description: "x" }).success).toBe(true);
+    expect(templateVariantSchema.safeParse({ id: "", name: "A" }).success).toBe(false);
+  });
+
+  it("round-trips the chosen template id", () => {
+    const json = slidesJsonWith(slides(), { images: [], customization: empty, templateId: "EAHZ" });
+    expect(deckExtrasFrom(json).templateId).toBe("EAHZ");
+    expect(deckExtrasFrom(null).templateId).toBeNull();
+  });
+});
+
+import { templateCandidates, resolveTemplateId } from "@ama/shared";
+
+describe("templateCandidates / resolveTemplateId", () => {
+  const base = "BASE";
+  it("puts the base template first, then the registered variants", () => {
+    expect(templateCandidates(base, variants).map((v) => v.id)).toEqual(["BASE", "A", "B", "C"]);
+    expect(templateCandidates(base, undefined).map((v) => v.id)).toEqual(["BASE"]);
+  });
+
+  it("does not list the base template twice", () => {
+    expect(templateCandidates(base, [variant("BASE"), variant("A")]).map((v) => v.id)).toEqual(["BASE", "A"]);
+  });
+
+  it("uses the stored template only while it is still registered", () => {
+    expect(resolveTemplateId(base, variants, "B")).toBe("B");
+    expect(resolveTemplateId(base, variants, "gone")).toBe("BASE");
+    expect(resolveTemplateId(base, variants, null)).toBe("BASE");
+    expect(resolveTemplateId(base, variants, "BASE")).toBe("BASE");
   });
 });

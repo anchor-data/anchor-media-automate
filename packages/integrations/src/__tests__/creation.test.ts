@@ -311,38 +311,3 @@ describe("buildCreationUserMessage", () => {
 function postDefaults() {
   return DEFAULT_DESIGN_RULES;
 }
-
-describe("background variety", () => {
-  const base = { postType: "knowhow", slides: validSlides(), caption: "c", hashtags: ["#a"] };
-
-  it("rejects a background when the template has no background slots", () => {
-    const result = validateDeck(
-      { ...base, background: { palette: "red", motif: "dots" } },
-      { idea, guideline, backgroundEnabled: false }
-    );
-    expect(result.ok).toBe(false);
-  });
-
-  it("accepts a background when enabled", () => {
-    expect(validateDeck({ ...base, background: { palette: "red", motif: "dots" } }, { idea, guideline, backgroundEnabled: true }).ok).toBe(true);
-  });
-
-  it("rejects repeating a recent background palette+motif", () => {
-    const result = validateDeck(
-      { ...base, background: { palette: "Red", motif: "dots" } },
-      { idea, guideline, backgroundEnabled: true, recentBackgrounds: [{ palette: "red", motif: "dots" }] }
-    );
-    expect(result.ok).toBe(false);
-  });
-
-  it("tells the agent about recent backgrounds and asks for a different one", () => {
-    const message = buildCreationUserMessage(idea.id, {
-      ideaId: idea.id,
-      accountId: idea.accountId,
-      background: { recent: [{ palette: "navy", motif: "waves" }] }
-    });
-    expect(message).toContain("navy");
-    expect(message).toContain("waves");
-    expect(message).toMatch(/different/i);
-  });
-});

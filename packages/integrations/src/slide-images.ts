@@ -1,5 +1,5 @@
 import { IMAGE_ASSET_CONTENT_TYPES, IMAGE_ASSET_MAX_BYTES } from "@ama/shared";
-import type { ImageAsset } from "@ama/shared";
+import type { ImageAsset, SlideImage } from "@ama/shared";
 
 /**
  * Turn a deck's image placements into Canva autofill image fields (slot → Canva asset id).
@@ -7,8 +7,7 @@ import type { ImageAsset } from "@ama/shared";
  * still renders text-only. Each asset is uploaded to Canva at most once (cached ids are reused).
  */
 export async function resolveSlideImages(input: {
-  /** Image placements. Slots are Canva field names (`sN_image`, or `sN_bg` for backgrounds). */
-  images: readonly { slot: string; assetId: string }[];
+  images: readonly SlideImage[];
   assets: readonly ImageAsset[];
   templateFields: readonly string[];
   /** Uploads the asset to Canva and returns (and persists) its Canva asset id. */

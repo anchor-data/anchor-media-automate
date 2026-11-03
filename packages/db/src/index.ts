@@ -18,14 +18,16 @@ import type {
   PostStatus,
   Reference,
   ReferenceCreate,
-  ReferenceKind
+  ReferenceKind,
+  TemplateVariant
 } from "@ama/shared";
 import {
   DEFAULT_AUTO_RUN_SCHEDULE,
   DEFAULT_DESIGN_RULES,
   IMAGE_ASSET_CONTENT_TYPES,
   IMAGE_ASSET_KINDS,
-  designRulesSchema
+  designRulesSchema,
+  templateVariantsSchema
 } from "@ama/shared";
 
 /** What the dashboard library shows and the agent can use: everything except per-post generated images. */
@@ -57,6 +59,7 @@ export interface Repository {
   updateAccountAutoRun(accountId: string, settings: AutoRunSettings): Promise<Account | null>;
   updateAccountImageStyle(accountId: string, imageStylePrompt: string): Promise<Account | null>;
   updateAccountDesignRules(accountId: string, designRules: DesignRules): Promise<Account | null>;
+  updateAccountTemplateVariants(accountId: string, variants: TemplateVariant[]): Promise<Account | null>;
   markAutoRun(accountId: string, at: string): Promise<void>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
@@ -195,6 +198,13 @@ class MockRepository implements Repository {
     const index = this.accounts.findIndex((a) => a.id === accountId);
     if (index < 0) return null;
     const updated = { ...this.accounts[index]!, designRules };
+    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
+    return updated;
+  }
+  async updateAccountTemplateVariants(accountId: string, templateVariants: TemplateVariant[]) {
+    const index = this.accounts.findIndex((a) => a.id === accountId);
+    if (index < 0) return null;
+    const updated = { ...this.accounts[index]!, templateVariants };
     this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
     return updated;
   }
@@ -587,6 +597,14 @@ class TursoRepository implements Repository {
     await this.client.execute({
       sql: "UPDATE accounts SET design_rules_json = ?, updated_at = ? WHERE id = ?",
       args: [JSON.stringify(designRules), nowIso(), accountId]
+    });
+    return this.getAccount(accountId);
+  }
+
+  async updateAccountTemplateVariants(accountId: string, variants: TemplateVariant[]) {
+    await this.client.execute({
+      sql: "UPDATE accounts SET template_variants_json = ?, updated_at = ? WHERE id = ?",
+      args: [JSON.stringify(variants), nowIso(), accountId]
     });
     return this.getAccount(accountId);
   }
@@ -1227,6 +1245,16 @@ class TursoRepository implements Repository {
   }
 }
 
+/** Tolerates NULL/legacy/invalid JSON: no variants. */
+function parseTemplateVariants(raw: unknown): TemplateVariant[] {
+  try {
+    const parsed = templateVariantsSchema.safeParse(JSON.parse(typeof raw === "string" && raw ? raw : "[]"));
+    return parsed.success ? parsed.data : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Tolerates NULL/legacy/invalid JSON: falls back to the defaults. */
 function parseDesignRules(raw: unknown): DesignRules {
   try {
@@ -1248,7 +1276,8 @@ function mapAccountRow(row: Record<string, unknown>): Account {
     autoRunSchedule: row.auto_run_schedule ? String(row.auto_run_schedule) : DEFAULT_AUTO_RUN_SCHEDULE,
     lastAutoRunAt: row.last_auto_run_at == null ? null : String(row.last_auto_run_at),
     imageStylePrompt: row.image_style_prompt ? String(row.image_style_prompt) : "",
-    designRules: parseDesignRules(row.design_rules_json)
+    designRules: parseDesignRules(row.design_rules_json),
+    templateVariants: parseTemplateVariants(row.template_variants_json)
   };
 }
 

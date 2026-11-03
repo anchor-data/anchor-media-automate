@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { missingTemplateFields, type CanvaClient } from "@ama/integrations";
 import type { Account } from "@ama/shared";
-import { DEFAULT_DESIGN_RULES, autoRunSettingsSchema, designRulesSchema } from "@ama/shared";
+import { DEFAULT_DESIGN_RULES, autoRunSettingsSchema, designRulesSchema, templateVariantsSchema } from "@ama/shared";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
 
@@ -83,4 +83,31 @@ accountRoutes.put("/accounts/:id/design-rules", async (c) => {
   const account = await repo.updateAccountDesignRules(c.req.param("id"), parsed.data);
   if (!account) return c.json({ error: "Account not found" }, 404);
   return c.json({ rules: account.designRules ?? DEFAULT_DESIGN_RULES });
+});
+
+/**
+ * Extra brand templates (same autofill fields, different layout) that posts rotate through. Each one
+ * is checked against the required fields before it is saved, like the base template.
+ */
+accountRoutes.get("/accounts/:id/template-variants", async (c) => {
+  const repo = createRepo(c.env);
+  const account = await repo.getAccount(c.req.param("id"));
+  if (!account) return c.json({ error: "Account not found" }, 404);
+  return c.json({ baseTemplateId: account.canvaTemplateId, variants: account.templateVariants ?? [] });
+});
+
+accountRoutes.put("/accounts/:id/template-variants", async (c) => {
+  const parsed = z.object({ variants: templateVariantsSchema }).safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const repo = createRepo(c.env);
+  const account = await repo.getAccount(c.req.param("id"));
+  if (!account) return c.json({ error: "Account not found" }, 404);
+
+  const canva = createCanva(c.env, repo);
+  for (const variant of parsed.data.variants) {
+    const check = await checkTemplate(canva, variant.id);
+    if (!check.ok) return c.json({ ...check, variantId: variant.id }, 422);
+  }
+  const updated = await repo.updateAccountTemplateVariants(account.id, parsed.data.variants);
+  return c.json({ baseTemplateId: account.canvaTemplateId, variants: updated?.templateVariants ?? [] });
 });

@@ -7,7 +7,6 @@ import {
   buildGenerationConfig,
   checkCustomization,
   isCustomizationEmpty,
-  sameBackground,
   slideDeckSchema,
   slideFieldsSchema
 } from "@ama/shared";
@@ -17,7 +16,6 @@ import type {
   Idea,
   ImageAsset,
   Job,
-  BackgroundPlan,
   PostCustomization,
   PostType,
   Reference,
@@ -48,11 +46,6 @@ export type CreationRunInput = {
   customization?: PostCustomization;
   /** Account-wide design rules. */
   designRules?: DesignRules;
-  /**
-   * Present when the account's template has background slots: the agent must then pick a palette
-   * and motif for this post, different from the `recent` posts so the feed does not look uniform.
-   */
-  background?: { recent: BackgroundPlan[] };
 };
 
 export type CreationRunOutput = {
@@ -75,10 +68,6 @@ export type DeckContext = {
   imageGeneration?: boolean;
   /** Per-post instructions the deck must honor. */
   customization?: PostCustomization;
-  /** True when the template exposes background slots, so `background` may be set. */
-  backgroundEnabled?: boolean;
-  /** Backgrounds of the account's latest posts; an identical palette+motif is rejected. */
-  recentBackgrounds?: readonly BackgroundPlan[];
 };
 
 export type DeckValidation =
@@ -138,14 +127,6 @@ export function validateDeck(raw: unknown, context: DeckContext): DeckValidation
   }
   for (const rule of findNgPhraseViolations(deck, context.guideline.ngRules)) {
     errors.push(`Deck contains an NG phrase: ${rule}`);
-  }
-  if (deck.background) {
-    const background = deck.background;
-    if (!context.backgroundEnabled) {
-      errors.push("background: the template has no background slots; omit background");
-    } else if ((context.recentBackgrounds ?? []).some((recent) => sameBackground(recent, background))) {
-      errors.push("background: same palette and motif as a recent post; choose a different palette or motif");
-    }
   }
   if (context.customization) {
     if (context.customization.graph.enabled && !context.imageGeneration) {
@@ -239,8 +220,6 @@ const submitDeckSchema = z.object({
   hashtags: z.array(z.string()),
   /** Images from list_image_assets placed into slides; empty when none fit. */
   images: z.array(z.object({ slot: z.string(), assetId: z.string() })),
-  /** Palette + motif for the generated background image; null when backgrounds are not offered. */
-  background: z.object({ palette: z.string(), motif: z.string() }).nullable(),
   /** Scene-only prompts for AI-generated slide illustrations; [] when generation is not offered. */
   imagePrompts: z.array(z.object({ slot: z.string(), scene: z.string() }))
 });
@@ -260,13 +239,6 @@ export function buildCreationUserMessage(ideaId: string, input: CreationRunInput
     "Build the 8-slide deck for this idea, then call submit_deck.",
     config
       ? `generationConfig (structured; "global" are account-wide design rules that always apply, "post" are this post's instructions, "requirements" are per-page musts):\n${JSON.stringify(config)}`
-      : null,
-    input.background
-      ? `background: pick a palette and motif for this post's background image (submit_deck.background). It must look clearly different from these recent posts' backgrounds (change the palette first, then the motif):\n${JSON.stringify(input.background.recent)}${
-          input.designRules?.colorPatterns.length
-            ? `\nPrefer a palette from generationConfig.global.colorPatterns; you may refine its wording.`
-            : ""
-        }`
       : null,
     customized && input.customization?.variationSeed
       ? `variationSeed: ${input.customization.variationSeed} — use it to choose a different angle, layout emphasis and phrasing than a default run would.`
@@ -347,18 +319,9 @@ export class OpenAICreationAgent implements CreationAgent {
             caption: payload.caption,
             hashtags: payload.hashtags,
             images: payload.images,
-            imagePrompts: payload.imagePrompts,
-            ...(payload.background ? { background: payload.background } : {})
+            imagePrompts: payload.imagePrompts
           },
-          {
-            idea,
-            guideline,
-            imageAssets,
-            imageGeneration,
-            customization: input.customization,
-            backgroundEnabled: Boolean(input.background),
-            recentBackgrounds: input.background?.recent
-          }
+          { idea, guideline, imageAssets, imageGeneration, customization: input.customization }
         );
         if (!result.ok) {
           state.rejections += 1;
@@ -394,7 +357,6 @@ Required workflow:
           : ""
       }
    generationConfig, when present, is binding: apply global design rules (tone of emphasis, emoji/icon policy, readability) to the copy; satisfy every "requirements" line and post.highlightKeywords (use each keyword verbatim in the slide text); honor post.imageMode (none = no images at all, asset_only = uploaded images only, never imagePrompts); follow post.notes. For a graph page, add an imagePrompts entry for that slot whose scene describes a simple chart (e.g. rising bar chart, clean axes) with NO text or numbers in the image, and put the actual numbers/labels in that slide's body text. For evidence, state the source or figure in the body text of the requested page within its character limit.
-   Backgrounds: when the user message asks for a background, set submit_deck.background {palette, motif} in English: palette = 2-3 colors (e.g. "deep navy and warm coral"); motif = abstract pattern/style (e.g. "soft overlapping circles, flat paper-cut layers"). Match the mood to the idea (calm for worries, energetic for tips) and make it clearly different from the recent ones. Never mention text or objects. Otherwise pass null.
 3) If submit_deck returns ok:false, fix exactly the listed errors and call it again.
 4) Do not answer in free text — submit_deck is your final output.`,
       tools: [get_idea, get_guideline, list_references, list_image_assets, get_job, submit_deck],

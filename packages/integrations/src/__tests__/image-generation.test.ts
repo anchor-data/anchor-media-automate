@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { composeBackgroundPrompt, composeImagePrompt, generateSlideImage } from "../image-generation";
+import { composeImagePrompt, generateSlideImage } from "../image-generation";
 
 const PNG_B64 = btoa("png-bytes");
 const ok = () => new Response(JSON.stringify({ data: [{ b64_json: PNG_B64 }] }), { status: 200 });
@@ -77,24 +77,5 @@ describe("generateSlideImage", () => {
     await expect(
       generateSlideImage({ apiKey: "k", prompt: "p", references: [], fetchImpl: fetchImpl as unknown as typeof fetch })
     ).rejects.toThrow(/no image/i);
-  });
-});
-
-describe("composeBackgroundPrompt", () => {
-  it("combines palette and motif, and protects text legibility", () => {
-    const prompt = composeBackgroundPrompt({ palette: "navy and warm orange", motif: "soft overlapping circles" }, "seed-1");
-    expect(prompt).toContain("navy and warm orange");
-    expect(prompt).toContain("soft overlapping circles");
-    expect(prompt).toMatch(/no text/i);
-    expect(prompt).toMatch(/calm|legib/i);
-    expect(prompt).toContain("seed-1");
-  });
-});
-
-describe("generateSlideImage size", () => {
-  it("passes a custom size through", async () => {
-    const fetchImpl = vi.fn(async () => ok());
-    await generateSlideImage({ apiKey: "k", prompt: "p", references: [], size: "1024x1536", fetchImpl: fetchImpl as unknown as typeof fetch });
-    expect(JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body)).size).toBe("1024x1536");
   });
 });

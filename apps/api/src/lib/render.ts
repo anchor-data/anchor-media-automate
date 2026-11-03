@@ -1,6 +1,6 @@
 import type { Repository } from "@ama/db";
 import { resolveSlideImages, type CanvaClient } from "@ama/integrations";
-import { BACKGROUND_SLOTS, deckExtrasFrom, slideFieldsSchema } from "@ama/shared";
+import { deckExtrasFrom, resolveTemplateId, slideImagesFrom, slideFieldsSchema } from "@ama/shared";
 import type { Post } from "@ama/shared";
 import { imageAssetKey } from "./image-assets";
 
@@ -14,12 +14,7 @@ async function loadSlideImages(
   templateId: string,
   bucket: R2Bucket | undefined
 ): Promise<Record<string, string>> {
-  const extras = deckExtrasFrom(post.slidesJson);
-  // The one generated background fills every background field the template exposes.
-  const backgrounds = extras.background
-    ? BACKGROUND_SLOTS.map((slot) => ({ slot, assetId: extras.background!.assetId }))
-    : [];
-  const images = [...extras.images, ...backgrounds];
+  const images = slideImagesFrom(post.slidesJson);
   if (images.length === 0) return {};
   if (!bucket) throw new Error("Post uses images but image storage (R2 IMAGE_ASSETS) is not configured");
   return resolveSlideImages({
@@ -62,13 +57,19 @@ export async function renderPost(
     const account = await repo.getAccount(post.accountId);
     if (!account) throw new Error(`Account not found: ${post.accountId}`);
 
+    // A post keeps the layout variant it was generated with; unregistered ones fall back to the base template.
+    const templateId = resolveTemplateId(
+      account.canvaTemplateId,
+      account.templateVariants,
+      deckExtrasFrom(post.slidesJson).templateId
+    );
     let designId = storedDesignId;
     if (!options.reexport || !designId) {
       const slides = slideFieldsSchema.safeParse(post.slidesJson);
       if (!slides.success) throw new Error("Post has no valid slides to render");
-      const images = await loadSlideImages(repo, canva, post, account.canvaTemplateId, options.imageBucket);
+      const images = await loadSlideImages(repo, canva, post, templateId, options.imageBucket);
       ({ designId } = await canva.autofill({
-        templateId: account.canvaTemplateId,
+        templateId,
         fields: slides.data,
         images,
         title: post.title
@@ -85,7 +86,7 @@ export async function renderPost(
         imageUrl,
         slideIndex,
         canvaDesignId: designId,
-        templateId: account.canvaTemplateId
+        templateId
       }))
     );
     await repo.updatePost(post.id, { generationStatus: "ready", generationError: null });

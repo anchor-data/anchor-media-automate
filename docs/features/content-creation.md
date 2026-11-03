@@ -55,7 +55,7 @@ After each run, `slides_json.report` holds `checks` (instruction reflected?) and
 
 ## Visual variety
 
-Posts would otherwise look identical because the Canva template is fixed. When the template has `s1_bg`…`s8_bg` image fields (see `canva-template-spec.md`), the agent chooses a palette + motif per post (avoiding the last 3 posts'), a background is generated and autofilled. Regenerating a post produces a new background. Turn it off by removing the fields from the template.
+Posts would otherwise look identical because the Canva template is fixed. Accounts can register extra brand templates (layout variants, see `canva-template-spec.md`); every generation renders through the least recently used one among the base template and the variants, so consecutive posts differ in text weight/size/position/decoration and decoration placement. Regenerating a post picks again.
 
 ## Status machine
 

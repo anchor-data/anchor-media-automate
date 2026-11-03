@@ -197,38 +197,66 @@ export type GenerationReport = z.infer<typeof generationReportSchema>;
 const imageListSchema = z.array(z.object({ slot: z.string().regex(/^s[1-8]_image$/), assetId: z.string().min(1) }));
 
 /**
- * Per-post look. Canva autofill cannot recolor a template, so the look varies through a generated
- * background image placed in the template's optional `s1_bg` … `s8_bg` image fields.
+ * A registered Canva brand template with the same autofill fields as the base template but a
+ * different layout (text style, weight, size, position, decoration). Canva autofill cannot restyle a
+ * template, so a post's look varies by rendering through a different variant.
  */
-export const BACKGROUND_SLOTS = Array.from({ length: SLIDE_PAGE_COUNT }, (_, index) => `s${index + 1}_bg`);
+export const templateVariantSchema = z.object({
+  /** Canva brand template id. */
+  id: z.string().min(1),
+  name: z.string().min(1).max(60),
+  description: z.string().max(300).default("")
+});
+export type TemplateVariant = z.infer<typeof templateVariantSchema>;
+export const templateVariantsSchema = z.array(templateVariantSchema).max(12);
 
-/** The background fields a brand template exposes, in page order. */
-export function backgroundSlotsIn(templateFields: readonly string[]): string[] {
-  const fields = new Set(templateFields);
-  return BACKGROUND_SLOTS.filter((slot) => fields.has(slot));
+export const BASE_TEMPLATE_NAME = "標準";
+
+/** Everything a post may render from: the account's base template first, then its variants. */
+export function templateCandidates(baseTemplateId: string, variants: readonly TemplateVariant[] | undefined): TemplateVariant[] {
+  return [
+    { id: baseTemplateId, name: BASE_TEMPLATE_NAME, description: "" },
+    ...(variants ?? []).filter((variant) => variant.id !== baseTemplateId)
+  ];
 }
 
-/** What the agent decides: a palette and a motif. The image is generated from these. */
-export const backgroundPlanSchema = z.object({
-  palette: z.string().min(1).max(80),
-  motif: z.string().min(1).max(300)
-});
-export type BackgroundPlan = z.infer<typeof backgroundPlanSchema>;
+/** The template to render a post with: its stored choice while still registered, else the base template. */
+export function resolveTemplateId(
+  baseTemplateId: string,
+  variants: readonly TemplateVariant[] | undefined,
+  storedTemplateId: string | null
+): string {
+  const known = templateCandidates(baseTemplateId, variants).some((variant) => variant.id === storedTemplateId);
+  return storedTemplateId !== null && known ? storedTemplateId : baseTemplateId;
+}
 
-/** A plan plus the generated image, as stored on the post. */
-export const storedBackgroundSchema = backgroundPlanSchema.extend({ assetId: z.string().min(1) });
-export type StoredBackground = z.infer<typeof storedBackgroundSchema>;
-
-export function sameBackground(a: BackgroundPlan, b: BackgroundPlan): boolean {
-  const norm = (value: string) => value.trim().toLowerCase();
-  return norm(a.palette) === norm(b.palette) && norm(a.motif) === norm(b.motif);
+/**
+ * Choose the variant for the next post: least recently used first, never-used before used, so
+ * consecutive posts do not share a look. `recentTemplateIds` is newest first. Ties are broken with
+ * `random` (injectable for tests).
+ */
+export function pickTemplateVariant(
+  variants: readonly TemplateVariant[],
+  recentTemplateIds: readonly string[],
+  random: () => number = Math.random
+): TemplateVariant | null {
+  if (variants.length === 0) return null;
+  // Higher = used longer ago; never used = Infinity.
+  const staleness = (variant: TemplateVariant): number => {
+    const index = recentTemplateIds.indexOf(variant.id);
+    return index < 0 ? Number.POSITIVE_INFINITY : index;
+  };
+  const best = Math.max(...variants.map(staleness));
+  const candidates = variants.filter((variant) => staleness(variant) === best);
+  return candidates[Math.min(candidates.length - 1, Math.floor(random() * candidates.length))] ?? null;
 }
 
 export interface DeckExtras {
   images: SlideImage[];
   customization: PostCustomization;
   report: GenerationReport | null;
-  background: StoredBackground | null;
+  /** Brand template this post was rendered from; null = the account's base template. */
+  templateId: string | null;
 }
 
 /**
@@ -240,12 +268,11 @@ export function deckExtrasFrom(slidesJson: unknown): DeckExtras {
   const images = imageListSchema.safeParse(raw.images);
   const customization = postCustomizationSchema.safeParse(raw.customization);
   const report = generationReportSchema.safeParse(raw.report);
-  const background = storedBackgroundSchema.safeParse(raw.background);
   return {
     images: images.success ? (images.data as SlideImage[]) : [],
     customization: customization.success ? customization.data : EMPTY_CUSTOMIZATION,
     report: report.success ? report.data : null,
-    background: background.success ? background.data : null
+    templateId: typeof raw.templateId === "string" && raw.templateId.length > 0 ? raw.templateId : null
   };
 }
 
@@ -256,7 +283,7 @@ export function slidesJsonWith(
     images: readonly SlideImage[];
     customization: PostCustomization;
     report?: GenerationReport | null;
-    background?: StoredBackground | null;
+    templateId?: string | null;
   }
 ): Record<string, unknown> {
   return {
@@ -264,6 +291,6 @@ export function slidesJsonWith(
     images: extras.images,
     customization: extras.customization,
     ...(extras.report ? { report: extras.report } : {}),
-    ...(extras.background ? { background: extras.background } : {})
+    ...(extras.templateId ? { templateId: extras.templateId } : {})
   };
 }

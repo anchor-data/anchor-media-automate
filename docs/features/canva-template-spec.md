@@ -41,13 +41,13 @@ Optional footer text (handle, page numbers) can be static in the Canva design ra
 - Bytes live in the R2 bucket bound as `IMAGE_ASSETS`; the Canva asset id is cached on the `image_assets` row.
 - Run `db setup` to create the `image_assets` table.
 
-## Optional background fields (per-post look)
+## Layout variants (per-post look)
 
-Autofill cannot recolor a template, so each post gets a different look through a **generated background image**. Add Canva **image** data fields `s1_bg` … `s8_bg` (any subset) on a full-bleed layer at the bottom of each page, with the image fit set to fill/crop (the image is portrait 1024x1536). Templates without them keep working: no background is generated.
+Autofill cannot restyle a template (font weight, size, position, decoration), so a post's look varies by rendering through a different **brand template with the same autofill fields**. Build variants in Canva from the base template: keep every field name and every text box capacity, change text weight/decoration/alignment/position, mirror or move decoration shapes. Do not enlarge text beyond the base size: the character limits in `SLIDE_FIELD_LIMITS` are tied to it.
 
-- The creation agent picks a palette (from the account's design-rule color patterns when set) and a motif per post, and is told the last 3 posts' backgrounds so it differs. A repeat of both is rejected by `validateDeck`.
-- One image per post is generated (`gpt-image-1`, no reference images) and reused in every `sN_bg` field the template has. It is stored as a `generated` image asset and referenced from `posts.slides_json.background`.
-- Keep the middle of each page calm: the prompt asks for a low-contrast center so slide text stays legible. Check text contrast in your template (e.g. put text on a semi-transparent panel).
+- Register them with `PUT /accounts/:id/template-variants` `{ variants: [{ id, name, description }] }`. Each one is validated against the required fields (like the base template).
+- The base template is always part of the rotation. Each generation picks the least recently used template (never-used first, never the previous one when there is a choice) and stores it as `posts.slides_json.templateId`. Re-rendering keeps it; a template that is no longer registered falls back to the base one.
+- Existing variants for the wakaru carousel: A (smaller underlined headings, bold body, mirrored decoration), B (numbers moved left, light body), C (numbers moved right, compact bold). Their layout is described in the variant's `description` so humans can tell them apart.
 
 ## Autofill payload shape
 
