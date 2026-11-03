@@ -21,12 +21,12 @@ An account has a page structure: an ordered list of page roles (`cover`, `empath
 
 ## Onboarding
 
-Adding an account is a stepper: アカウント → ターゲット・コンセプト (creates the account) → デザイン (references + guideline) → スライド構成 → スケジュール → 完了. Steps after the account is created can be skipped and finished later. Everything entered there is shown and editable afterwards: target/concept in エージェント > ペルソナ・ガイドライン, schedule and a design/structure summary in エージェント > エージェント設定, and the full design in デザイン.
+Adding an account is a step-by-step wizard; see [`onboarding.md`](./onboarding.md).
 
 ## Where things live
 
 - `@ama/renderer`: `DesignSpec` + guardrails (`spec.ts`), variation (`vary.ts`), reference/prompt → spec (`design.ts`, `nl.ts`), Japanese line wrapping (`wrap.ts`), HTML preview (`html.ts`, used by the デザイン page) and PPTX output (`pptx.ts`, used for Canva).
-- `accounts.design_json`: `{ spec, guideline, referenceNote, summary, updatedAt }`.
+- `accounts.design_json`: `{ spec, guideline, referenceNote, summary, updatedAt, analysisCostUsd, structure, structureSummary }`.
 - `posts.slides_json.design` / `.designPrompt`: the design a post was rendered with and the last prompt.
 
 ## Structure and images
@@ -44,4 +44,6 @@ Measured on the local stack: deriving a design from 3 screenshots about $0.008; 
 ## Limits
 
 - Canva stores two font weights from a PPTX (normal/bold), so weights 300-900 collapse to two steps there. The HTML preview shows all nine.
+- Manual edits in Canva are lost if the slide text is edited in the app afterwards (that creates a new import). Use "プレビューを更新" to re-export after editing in Canva.
+- Structure inference is only as good as the number of pages of one post you provide as screenshots.
 - The page types (cover / empathy / point / pick / CTA) are fixed in code; the design chooses among a few arrangements of the content pages.

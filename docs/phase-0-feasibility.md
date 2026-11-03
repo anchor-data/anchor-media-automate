@@ -1,9 +1,11 @@
 # Phase 0 feasibility notes
 
+> **Historical.** These are the Phase 0 findings. The Canva Autofill path described here was dropped: posts are now rendered by `packages/renderer`, imported into Canva as PPTX and exported as PNG (see `features/design.md`). The OAuth connect flow (user token, rotating refresh token) was built and is still used for import/export.
+
 Date: 2026-10-15  
 Scope: Canva Autofill auth + OpenAI Agents on Cloudflare Workers
 
-## Canva Autofill
+## Canva Autofill (superseded)
 
 ### What we have
 
@@ -49,7 +51,7 @@ Do **not** call Autofill until user OAuth exists. Optional later check: exchange
 
 ## Phase 0 exit criteria
 
-- [x] Feature docs written (`content-ideation`, `content-creation`, `canva-template-spec`)
+- [x] Feature docs written (`content-ideation`, `content-creation`, design spec — originally `canva-template-spec`, since removed)
 - [x] Architecture v1.1 addendum noted
 - [x] Canva auth gap documented
 - [x] Agents/Workers risk documented
