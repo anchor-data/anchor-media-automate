@@ -1,0 +1,23 @@
+# Feature: Account design
+
+How a post gets its look, without anyone building Canva templates.
+
+## Flow
+
+1. **References.** On the デザイン page the owner adds screenshots of reference posts (up to 8) and optionally a reference account link/handle. The link is only stored as a note: Instagram is never fetched.
+2. **Guideline.** A written design guideline (tone, color feel, weight, what to avoid) next to the references. It wins over the references where they disagree.
+3. **Derive.** `POST /accounts/:id/design/analyze` sends the screenshots + guideline to a vision model, which returns a `DesignSpec` (colors, type weights, corner radius, decoration, alternate accent colors, how much each post may vary). The spec is validated field by field and passed through a readability guardrail (WCAG contrast; text colors are swapped if unreadable).
+4. **Per post.** Each new post gets the account design varied by its id (`varySpec`): accent color from the account's alternates, number alignment, and (when `variety` is `lively`) heading underline and decoration. `variety: none` keeps every post identical.
+5. **Regenerate.** In the editor, 「デザインを再生成」 takes a free-text prompt ("番号は左、見出しは下線なし、明るく"). The model returns a partial spec which is merged into the post's current design (the account guideline is part of the prompt). Without a prompt the account design is varied again. Text is never touched.
+
+## Where things live
+
+- `@ama/renderer`: `DesignSpec` + guardrails (`spec.ts`), variation (`vary.ts`), reference/prompt → spec (`design.ts`, `nl.ts`), Japanese line wrapping (`wrap.ts`), HTML preview (`html.ts`, used by the デザイン page) and PPTX output (`pptx.ts`, used for Canva).
+- `accounts.design_json`: `{ spec, guideline, referenceNote, summary, updatedAt }`.
+- `posts.slides_json.design` / `.designPrompt`: the design a post was rendered with and the last prompt.
+
+## Limits
+
+- Canva stores two font weights from a PPTX (normal/bold), so weights 300-900 collapse to two steps there. The HTML preview shows all nine.
+- Uploaded assets and AI illustrations are not placed on slides yet (the new layouts have no image slots).
+- Layout structure (cover / empathy / point / pick / CTA) is fixed in code; the design controls style, not structure.

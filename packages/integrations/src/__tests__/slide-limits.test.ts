@@ -1,6 +1,5 @@
 import { SLIDE_FIELD_LIMITS, slideFieldsSchema } from "@ama/shared";
 import { describe, expect, it } from "vitest";
-import { REQUIRED_TEMPLATE_FIELDS } from "../canva";
 
 /**
  * Text capacity of each box in the published "wakaru carousel template" (Japanese, one char per
@@ -31,8 +30,8 @@ const TEMPLATE_CAPACITY: Record<string, number> = {
 };
 
 describe("slide field limits", () => {
-  it("defines a limit for every required template field and nothing else", () => {
-    expect(Object.keys(SLIDE_FIELD_LIMITS).sort()).toEqual([...REQUIRED_TEMPLATE_FIELDS].sort());
+  it("defines a limit for every slide field and nothing else", () => {
+    expect(Object.keys(SLIDE_FIELD_LIMITS).sort()).toEqual(Object.keys(slideFieldsSchema.shape).sort());
   });
 
   it("matches what fits in the template's text boxes", () => {

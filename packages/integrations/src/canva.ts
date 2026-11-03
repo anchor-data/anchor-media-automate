@@ -1,7 +1,4 @@
-import { slideFieldsSchema } from "@ama/shared";
-import { buildDraftPdf } from "./draft-pdf";
 import { NotConfiguredError } from "./errors";
-import type { TemplateStructure } from "./template-structure";
 
 /**
  * Canva Connect client. Ported from marketing-automation-tools/tiktok_dashboard/canva_connect.py.
@@ -14,7 +11,6 @@ import type { TemplateStructure } from "./template-structure";
 export const CANVA_BASE_URL = "https://api.canva.com/rest/v1";
 export const DESIGN_PAGES_CACHE_TTL_MS = 60 * 60 * 1000;
 
-const MAX_TEMPLATE_PAGES = 5;
 const POLL_INTERVAL_MS = 1500;
 const POLL_MAX_ATTEMPTS = 40;
 const TOKEN_EXPIRY_MARGIN_MS = 60_000;
@@ -31,63 +27,18 @@ export interface CanvaDesignCache {
   set(designId: string, urls: string[]): Promise<void>;
 }
 
-export type CanvaBrandTemplate = { id: string; title: string; thumbnailUrl: string | null };
-
-/** Autofill field names a brand template must expose (s1_title … s8_cta). */
-export const REQUIRED_TEMPLATE_FIELDS: readonly string[] = Object.keys(slideFieldsSchema.shape);
-
-export function missingTemplateFields(available: readonly string[]): string[] {
-  const have = new Set(available);
-  return REQUIRED_TEMPLATE_FIELDS.filter((name) => !have.has(name));
-}
-
 export type CanvaThumbnail = { url: string; width: number; height: number };
 
 export interface CanvaClient {
   mode: "mock" | "canva";
-  autofill(input: {
-    templateId: string;
-    fields: Readonly<Record<string, string>>;
-    /** Image field name → Canva asset id (see uploadAsset). */
-    images?: Readonly<Record<string, string>>;
-    title?: string;
-  }): Promise<{ designId: string }>;
-  /** Upload image bytes to the Canva account; the asset id can be used in autofill image fields. */
-  uploadAsset(input: { name: string; bytes: Uint8Array }): Promise<{ assetId: string }>;
   /** PNG URL for every page of the design, in page order. */
   exportPages(designId: string): Promise<string[]>;
   getThumbnail(designId: string): Promise<CanvaThumbnail | null>;
-  listBrandTemplates(): Promise<CanvaBrandTemplate[]>;
-  /** Names of the autofill data fields defined on a brand template. */
-  getTemplateFieldNames(templateId: string): Promise<string[]>;
-  /**
-   * 4:5 design a human finishes in Canva (lay it out, tag the autofill fields, publish as a brand
-   * template). With a `structure` it has one page per structure page (imported from a generated
-   * PDF); without one it is a single blank page. The Connect API cannot add elements or publish
-   * templates, so this is the furthest the app can go on its own.
-   */
-  createDraftDesign(input: { title: string; structure?: TemplateStructure }): Promise<CanvaDraftDesign>;
+  /** Import any file Canva supports (PPTX, PDF...) as a new editable design. Titles are cut to 50 characters. */
+  importFile(input: { title: string; bytes: Uint8Array; mimeType: string }): Promise<CanvaDraftDesign>;
 }
 
 export type CanvaDraftDesign = { designId: string; editUrl: string };
-
-export const TEMPLATE_PAGE_WIDTH = 1080;
-export const TEMPLATE_PAGE_HEIGHT = 1350;
-
-export type CanvaAutofillValue = { type: "text"; text: string } | { type: "image"; asset_id: string };
-
-/** Autofill `data` payload: text data fields plus optional image fields backed by Canva assets. */
-export function toAutofillData(
-  fields: Readonly<Record<string, string>>,
-  images: Readonly<Record<string, string>> = {}
-): Record<string, CanvaAutofillValue> {
-  return {
-    ...Object.fromEntries(Object.entries(fields).map(([name, text]) => [name, { type: "text" as const, text }])),
-    ...Object.fromEntries(
-      Object.entries(images).map(([name, assetId]) => [name, { type: "image" as const, asset_id: assetId }])
-    )
-  };
-}
 
 /** Pull the design id out of a Canva design URL; `canva.link` shortlinks are followed. */
 export async function resolveCanvaDesignId(
@@ -111,12 +62,6 @@ export async function resolveCanvaDesignId(
 
 export class MockCanvaClient implements CanvaClient {
   mode: "mock" = "mock";
-  async autofill(input: { templateId: string }) {
-    return { designId: `design_${input.templateId}` };
-  }
-  async uploadAsset(input: { name: string }) {
-    return { assetId: `asset_${input.name.replace(/\W+/g, "_")}` };
-  }
   async exportPages(designId: string) {
     return Array.from(
       { length: 8 },
@@ -126,14 +71,8 @@ export class MockCanvaClient implements CanvaClient {
   async getThumbnail(designId: string) {
     return { url: `https://images.example.com/${designId}/thumb.png`, width: 1080, height: 1350 };
   }
-  async listBrandTemplates() {
-    return [{ id: "tpl_wakaru_explainer_v1", title: "wakaru-explainer hybrid v1 (mock)", thumbnailUrl: null }];
-  }
-  async getTemplateFieldNames() {
-    return [...REQUIRED_TEMPLATE_FIELDS];
-  }
-  async createDraftDesign(input: { title: string; structure?: TemplateStructure }) {
-    const designId = `draft_${input.title.replace(/\W+/g, "_")}`;
+  async importFile(input: { title: string; bytes: Uint8Array; mimeType: string }) {
+    const designId = `design_${input.title.replace(/\W+/g, "_")}`;
     return { designId, editUrl: `https://www.canva.com/design/${designId}/edit` };
   }
 }
@@ -171,15 +110,6 @@ type CanvaJob = {
   };
 };
 
-type CanvaAssetUploadJob = {
-  job: {
-    id: string;
-    status: "in_progress" | "success" | "failed";
-    asset?: { id: string };
-    error?: { message?: string };
-  };
-};
-
 type CanvaImportJob = {
   job: {
     id: string;
@@ -188,6 +118,9 @@ type CanvaImportJob = {
     error?: { message?: string };
   };
 };
+
+/** Canva rejects longer design titles. */
+const CANVA_TITLE_MAX_CHARS = 50;
 
 function toBase64(text: string): string {
   return btoa(Array.from(new TextEncoder().encode(text), (byte) => String.fromCharCode(byte)).join(""));
@@ -205,38 +138,6 @@ export class CanvaApiClient implements CanvaClient {
     this.state = credentials.shared ?? {};
     this.fetchImpl = credentials.fetchImpl ?? ((input, init) => fetch(input, init));
     this.sleep = credentials.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  }
-
-  async autofill(input: {
-    templateId: string;
-    fields: Readonly<Record<string, string>>;
-    images?: Readonly<Record<string, string>>;
-    title?: string;
-  }): Promise<{ designId: string }> {
-    const created = await this.request<CanvaJob>("POST", "/autofills", {
-      brand_template_id: input.templateId,
-      ...(input.title ? { title: input.title } : {}),
-      data: toAutofillData(input.fields, input.images)
-    });
-    const done = await this.poll(`/autofills/${created.job.id}`, created);
-    const designId = done.job.result?.design?.id;
-    if (!designId) {
-      throw new Error("Canva autofill finished without a design id");
-    }
-    return { designId };
-  }
-
-  async uploadAsset(input: { name: string; bytes: Uint8Array }): Promise<{ assetId: string }> {
-    const created = await this.request<CanvaAssetUploadJob>("POST", "/asset-uploads", input.bytes, {
-      "Content-Type": "application/octet-stream",
-      "Asset-Upload-Metadata": JSON.stringify({ name_base64: toBase64(input.name) })
-    });
-    const done = await this.poll(`/asset-uploads/${created.job.id}`, created);
-    const assetId = done.job.asset?.id;
-    if (!assetId) {
-      throw new Error("Canva asset upload finished without an asset id");
-    }
-    return { assetId };
   }
 
   async exportPages(designId: string): Promise<string[]> {
@@ -271,55 +172,11 @@ export class CanvaApiClient implements CanvaClient {
     return { url: thumbnail.url, width: thumbnail.width ?? 0, height: thumbnail.height ?? 0 };
   }
 
-  async listBrandTemplates(): Promise<CanvaBrandTemplate[]> {
-    type Page = {
-      items?: Array<{ id: string; title?: string; thumbnail?: { url?: string } }>;
-      continuation?: string;
-    };
-    const templates: CanvaBrandTemplate[] = [];
-    let continuation: string | undefined;
-    for (let page = 0; page < MAX_TEMPLATE_PAGES; page++) {
-      const query = new URLSearchParams({ limit: "50", ...(continuation ? { continuation } : {}) });
-      const response = await this.request<Page>("GET", `/brand-templates?${query}`);
-      for (const item of response.items ?? []) {
-        templates.push({ id: item.id, title: item.title ?? item.id, thumbnailUrl: item.thumbnail?.url ?? null });
-      }
-      continuation = response.continuation;
-      if (!continuation) break;
-    }
-    return templates;
-  }
-
-  async getTemplateFieldNames(templateId: string): Promise<string[]> {
-    const response = await this.request<{ dataset?: Record<string, unknown> }>(
-      "GET",
-      `/brand-templates/${encodeURIComponent(templateId)}/dataset`
-    );
-    return Object.keys(response.dataset ?? {});
-  }
-
-  async createDraftDesign(input: { title: string; structure?: TemplateStructure }): Promise<CanvaDraftDesign> {
-    if (input.structure) return this.importDraftPdf(input.title, input.structure);
-    const response = await this.request<{
-      design?: { id?: string; urls?: { edit_url?: string } };
-    }>("POST", "/designs", {
-      design_type: { type: "custom", width: TEMPLATE_PAGE_WIDTH, height: TEMPLATE_PAGE_HEIGHT },
-      title: input.title
-    });
-    const designId = response.design?.id;
-    if (!designId) {
-      throw new Error("Canva created the draft without a design id");
-    }
-    return {
-      designId,
-      editUrl: response.design?.urls?.edit_url ?? `https://www.canva.com/design/${designId}/edit`
-    };
-  }
-
-  private async importDraftPdf(title: string, structure: TemplateStructure): Promise<CanvaDraftDesign> {
-    const created = await this.request<CanvaImportJob>("POST", "/imports", await buildDraftPdf(structure), {
+  async importFile(input: { title: string; bytes: Uint8Array; mimeType: string }): Promise<CanvaDraftDesign> {
+    const title = Array.from(input.title).slice(0, CANVA_TITLE_MAX_CHARS).join("");
+    const created = await this.request<CanvaImportJob>("POST", "/imports", input.bytes, {
       "Content-Type": "application/octet-stream",
-      "Import-Metadata": JSON.stringify({ title_base64: toBase64(title), mime_type: "application/pdf" })
+      "Import-Metadata": JSON.stringify({ title_base64: toBase64(title), mime_type: input.mimeType })
     });
     const done = await this.poll(`/imports/${created.job.id}`, created);
     const design = done.job.result?.designs?.[0];
@@ -332,7 +189,7 @@ export class CanvaApiClient implements CanvaClient {
     };
   }
 
-  private async poll<T extends Pick<CanvaJob, "job"> | CanvaImportJob | CanvaAssetUploadJob>(path: string, initial: T): Promise<T> {
+  private async poll<T extends Pick<CanvaJob, "job"> | CanvaImportJob>(path: string, initial: T): Promise<T> {
     let current = initial;
     for (let attempt = 0; attempt < POLL_MAX_ATTEMPTS; attempt++) {
       if (current.job.status === "success") return current;

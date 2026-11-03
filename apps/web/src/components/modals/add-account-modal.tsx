@@ -1,31 +1,27 @@
 "use client";
 
 import { useState } from "react";
-import { CanvaTemplateSelect } from "../canva-template-select";
 import { Icon } from "../icon";
-import { TemplateDraftPanel } from "../template-draft-panel";
 import { useWorkspace } from "../workspace-context";
 import { SCHEDULE_OPTIONS } from "../../lib/mock-data";
 import { Modal } from "./modal";
 
 export function AddAccountModal() {
-  const { closeModal, addAccount, notify, apiReady } = useWorkspace();
+  const { closeModal, addAccount, notify } = useWorkspace();
   const [handle, setHandle] = useState("");
   const [schedule, setSchedule] = useState<string>(SCHEDULE_OPTIONS[0]);
   const [target, setTarget] = useState("");
   const [concept, setConcept] = useState("");
   const [title, setTitle] = useState("");
   const [connected, setConnected] = useState(false);
-  const [templateId, setTemplateId] = useState("");
   const [saving, setSaving] = useState(false);
-  const [templateListKey, setTemplateListKey] = useState(0);
 
-  const canSubmit = handle.trim().length > 0 && (!apiReady || templateId !== "") && !saving;
+  const canSubmit = handle.trim().length > 0 && !saving;
 
   function submit() {
     if (!canSubmit) return;
     setSaving(true);
-    void addAccount(handle, schedule, target, concept, title, templateId || undefined)
+    void addAccount(handle, schedule, target, concept, title)
       .then(() => {
         notify("アカウントを追加しました");
         closeModal();
@@ -78,22 +74,6 @@ export function AddAccountModal() {
               onChange={(e) => setHandle(e.target.value)}
             />
           </div>
-          {apiReady ? (
-            <div className="tile stack gap-8">
-              <span className="label">Canvaテンプレート</span>
-              <CanvaTemplateSelect
-                key={templateListKey}
-                value={templateId}
-                onChange={setTemplateId}
-                disabled={saving}
-              />
-              <span className="muted small">s1_title〜s8_cta の21項目を持つブランドテンプレートを選択</span>
-              <TemplateDraftPanel
-                disabled={saving}
-                onRefreshTemplates={() => setTemplateListKey((key) => key + 1)}
-              />
-            </div>
-          ) : null}
           <div className="tile">
             <label className="label" htmlFor="acc-schedule">
               投稿生成スケジュール

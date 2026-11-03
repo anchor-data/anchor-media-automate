@@ -1,9 +1,9 @@
 import { createClient, type Client } from "@libsql/client";
 import type {
   Account,
+  AccountDesign,
   AgentRun,
   AutoRunSettings,
-  DesignRules,
   Guideline,
   GuidelineUpsert,
   Idea,
@@ -18,16 +18,13 @@ import type {
   PostStatus,
   Reference,
   ReferenceCreate,
-  ReferenceKind,
-  TemplateVariant
+  ReferenceKind
 } from "@ama/shared";
 import {
   DEFAULT_AUTO_RUN_SCHEDULE,
-  DEFAULT_DESIGN_RULES,
   IMAGE_ASSET_CONTENT_TYPES,
   IMAGE_ASSET_KINDS,
-  designRulesSchema,
-  templateVariantsSchema
+  accountDesignSchema
 } from "@ama/shared";
 
 /** What the dashboard library shows and the agent can use: everything except per-post generated images. */
@@ -55,11 +52,9 @@ export interface Repository {
   getAccount(accountId: string): Promise<Account | null>;
   listAccounts(): Promise<Account[]>;
   createAccount(account: Account): Promise<Account>;
-  updateAccountTemplate(accountId: string, canvaTemplateId: string): Promise<Account | null>;
   updateAccountAutoRun(accountId: string, settings: AutoRunSettings): Promise<Account | null>;
   updateAccountImageStyle(accountId: string, imageStylePrompt: string): Promise<Account | null>;
-  updateAccountDesignRules(accountId: string, designRules: DesignRules): Promise<Account | null>;
-  updateAccountTemplateVariants(accountId: string, variants: TemplateVariant[]): Promise<Account | null>;
+  updateAccountDesign(accountId: string, design: AccountDesign): Promise<Account | null>;
   markAutoRun(accountId: string, at: string): Promise<void>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
@@ -180,13 +175,6 @@ class MockRepository implements Repository {
   async listAccounts() {
     return this.accounts;
   }
-  async updateAccountTemplate(accountId: string, canvaTemplateId: string) {
-    const index = this.accounts.findIndex((a) => a.id === accountId);
-    if (index < 0) return null;
-    const updated = { ...this.accounts[index]!, canvaTemplateId };
-    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
-    return updated;
-  }
   async updateAccountImageStyle(accountId: string, imageStylePrompt: string) {
     const index = this.accounts.findIndex((a) => a.id === accountId);
     if (index < 0) return null;
@@ -194,17 +182,10 @@ class MockRepository implements Repository {
     this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
     return updated;
   }
-  async updateAccountDesignRules(accountId: string, designRules: DesignRules) {
+  async updateAccountDesign(accountId: string, design: AccountDesign) {
     const index = this.accounts.findIndex((a) => a.id === accountId);
     if (index < 0) return null;
-    const updated = { ...this.accounts[index]!, designRules };
-    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
-    return updated;
-  }
-  async updateAccountTemplateVariants(accountId: string, templateVariants: TemplateVariant[]) {
-    const index = this.accounts.findIndex((a) => a.id === accountId);
-    if (index < 0) return null;
-    const updated = { ...this.accounts[index]!, templateVariants };
+    const updated = { ...this.accounts[index]!, design };
     this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
     return updated;
   }
@@ -577,13 +558,6 @@ class TursoRepository implements Repository {
     return result.rows.map(mapAccountRow);
   }
 
-  async updateAccountTemplate(accountId: string, canvaTemplateId: string) {
-    await this.client.execute({
-      sql: "UPDATE accounts SET canva_template_id = ?, updated_at = ? WHERE id = ?",
-      args: [canvaTemplateId, nowIso(), accountId]
-    });
-    return this.getAccount(accountId);
-  }
 
   async updateAccountImageStyle(accountId: string, imageStylePrompt: string) {
     await this.client.execute({
@@ -593,18 +567,12 @@ class TursoRepository implements Repository {
     return this.getAccount(accountId);
   }
 
-  async updateAccountDesignRules(accountId: string, designRules: DesignRules) {
-    await this.client.execute({
-      sql: "UPDATE accounts SET design_rules_json = ?, updated_at = ? WHERE id = ?",
-      args: [JSON.stringify(designRules), nowIso(), accountId]
-    });
-    return this.getAccount(accountId);
-  }
 
-  async updateAccountTemplateVariants(accountId: string, variants: TemplateVariant[]) {
+
+  async updateAccountDesign(accountId: string, design: AccountDesign) {
     await this.client.execute({
-      sql: "UPDATE accounts SET template_variants_json = ?, updated_at = ? WHERE id = ?",
-      args: [JSON.stringify(variants), nowIso(), accountId]
+      sql: "UPDATE accounts SET design_json = ?, updated_at = ? WHERE id = ?",
+      args: [JSON.stringify(design), nowIso(), accountId]
     });
     return this.getAccount(accountId);
   }
@@ -635,7 +603,7 @@ class TursoRepository implements Repository {
         account.id,
         account.name,
         account.instagramHandle,
-        account.canvaTemplateId,
+        "",
         account.tone,
         t,
         t
@@ -1245,23 +1213,13 @@ class TursoRepository implements Repository {
   }
 }
 
-/** Tolerates NULL/legacy/invalid JSON: no variants. */
-function parseTemplateVariants(raw: unknown): TemplateVariant[] {
+/** Tolerates NULL/legacy/invalid JSON: an account without a design yet. */
+function parseDesign(raw: unknown): AccountDesign {
   try {
-    const parsed = templateVariantsSchema.safeParse(JSON.parse(typeof raw === "string" && raw ? raw : "[]"));
-    return parsed.success ? parsed.data : [];
+    const parsed = accountDesignSchema.safeParse(JSON.parse(typeof raw === "string" && raw ? raw : "{}"));
+    return parsed.success ? parsed.data : accountDesignSchema.parse({});
   } catch {
-    return [];
-  }
-}
-
-/** Tolerates NULL/legacy/invalid JSON: falls back to the defaults. */
-function parseDesignRules(raw: unknown): DesignRules {
-  try {
-    const parsed = designRulesSchema.safeParse(JSON.parse(typeof raw === "string" && raw ? raw : "{}"));
-    return parsed.success ? parsed.data : DEFAULT_DESIGN_RULES;
-  } catch {
-    return DEFAULT_DESIGN_RULES;
+    return accountDesignSchema.parse({});
   }
 }
 
@@ -1270,14 +1228,12 @@ function mapAccountRow(row: Record<string, unknown>): Account {
     id: String(row.id),
     name: String(row.name),
     instagramHandle: String(row.instagram_handle),
-    canvaTemplateId: String(row.canva_template_id),
     tone: String(row.tone),
     autoRunEnabled: sqliteBool(row.auto_run_enabled),
     autoRunSchedule: row.auto_run_schedule ? String(row.auto_run_schedule) : DEFAULT_AUTO_RUN_SCHEDULE,
     lastAutoRunAt: row.last_auto_run_at == null ? null : String(row.last_auto_run_at),
     imageStylePrompt: row.image_style_prompt ? String(row.image_style_prompt) : "",
-    designRules: parseDesignRules(row.design_rules_json),
-    templateVariants: parseTemplateVariants(row.template_variants_json)
+    design: parseDesign(row.design_json)
   };
 }
 

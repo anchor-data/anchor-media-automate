@@ -13,6 +13,7 @@
   "dependencies": {
     "@ama/db": "workspace:*",
     "@ama/integrations": "workspace:*",
+    "@ama/renderer": "workspace:*",
     "@ama/shared": "workspace:*",
     "hono": "^4.9.7",
     "zod": "^4.4.3"

@@ -4,11 +4,9 @@ import Link from "next/link";
 import { useState } from "react";
 import { AUTO_RUN_SCHEDULES } from "@ama/shared";
 import { AgentProfileForm } from "../agent-profile-form";
-import { CanvaTemplateSelect } from "../canva-template-select";
 import { Icon } from "../icon";
 import { PageTopbar, Switch, Tabs } from "../ui/page";
 import { useWorkspace } from "../workspace-context";
-import { canvaTemplateUrl } from "../../lib/canva";
 
 type SideTab = "agent" | "profile" | "instagram";
 
@@ -29,7 +27,6 @@ export function AgentAccountsPage() {
     apiReady,
     openModal,
     saveAutoRun,
-    saveCanvaTemplate,
     removeMemory,
     notify
   } = useWorkspace();
@@ -37,18 +34,14 @@ export function AgentAccountsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const active = accounts.find((a) => a.id === selectedId) ?? null;
   const [tab, setTab] = useState<SideTab>("agent");
-  const [templateId, setTemplateId] = useState<string | null>(null);
-  const [applying, setApplying] = useState(false);
   const [savingRun, setSavingRun] = useState(false);
 
-  const pickedTemplate = templateId ?? active?.canvaTemplateId ?? "";
   const instagramConnected = integrations?.instagram ?? false;
 
   /** Opening an account always starts on the エージェント設定 tab. */
   const selectAccount = (id: string) => {
     setActiveAccountId(id);
     setSelectedId(id);
-    setTemplateId(null);
     setTab("agent");
   };
 
@@ -62,20 +55,6 @@ export function AgentAccountsPage() {
       notify(errorText(error, "保存に失敗しました"));
     } finally {
       setSavingRun(false);
-    }
-  };
-
-  const applyTemplate = async () => {
-    if (!active) return;
-    setApplying(true);
-    try {
-      await saveCanvaTemplate(active.id, pickedTemplate);
-      setTemplateId(null);
-      notify("テンプレートを適用しました");
-    } catch (error) {
-      notify(errorText(error, "テンプレートの適用に失敗しました"));
-    } finally {
-      setApplying(false);
     }
   };
 
@@ -124,7 +103,7 @@ export function AgentAccountsPage() {
                       </span>
                       <span className="stack gap-2 col-guide">
                         <strong className="small">ガイドライン {isActive && guideline ? `v${guideline.version}` : "—"}</strong>
-                        <span className="muted small">{account.canvaTemplateId ? "テンプレート設定済み" : "未設定"}</span>
+                        <Link className="link small" href="/design">デザイン</Link>
                       </span>
                       <span className="link small">
                         {isActive ? "選択中" : "設定"}
@@ -186,26 +165,6 @@ export function AgentAccountsPage() {
                       </select>
                       {!apiReady ? <p className="muted small">API未接続のため定期実行は利用できません</p> : null}
                     </div>
-                    {apiReady ? (
-                      <div className="stack gap-8">
-                        <strong>Canvaテンプレート</strong>
-                        <CanvaTemplateSelect value={pickedTemplate} onChange={setTemplateId} disabled={applying} />
-                        <div className="row gap-12">
-                          <button
-                            className="btn outline sm"
-                            disabled={applying || !pickedTemplate || pickedTemplate === active.canvaTemplateId}
-                            onClick={() => void applyTemplate()}
-                          >
-                            {applying ? "検証中…" : "テンプレートを適用"}
-                          </button>
-                          {active.canvaTemplateId ? (
-                            <a className="link small" href={canvaTemplateUrl(active.canvaTemplateId)} target="_blank" rel="noreferrer">
-                              Canvaで開く
-                            </a>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
                     <div className="stack gap-8">
                       <div className="row between">
                         <strong>メモリー(重複防止)</strong>

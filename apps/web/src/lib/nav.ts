@@ -38,7 +38,7 @@ export const NAV_SECTIONS: readonly NavSection[] = [
     heading: "素材",
     items: [
       { href: "/assets", label: "アセットライブラリ" },
-      { href: "/templates", label: "テンプレート管理" },
+      { href: "/design", label: "デザイン" },
       { href: "/guidelines", label: "参照資料・メモリ" }
     ]
   },

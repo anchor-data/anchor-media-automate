@@ -2,8 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { EMPTY_CUSTOMIZATION, type Idea, type PostCustomization } from "@ama/shared";
-import { CustomizationForm, customizationIssues } from "../customization-form";
+import type { Idea } from "@ama/shared";
 import { PageTopbar } from "../ui/page";
 import { Icon } from "../icon";
 import { useWorkspace } from "../workspace-context";
@@ -42,8 +41,6 @@ export function IdeasPage() {
   const [starting, setStarting] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
-  // Kept per idea so switching between ideas does not leak one idea's instructions into another.
-  const [customizations, setCustomizations] = useState<Readonly<Record<string, PostCustomization>>>({});
 
   const accountIdeas = useMemo(
     () =>
@@ -53,8 +50,6 @@ export function IdeasPage() {
     [ideas, activeAccountId]
   );
   const selected = accountIdeas.find((i) => i.id === selectedIdeaId) ?? accountIdeas[0] ?? null;
-  const customization = (selected && customizations[selected.id]) || EMPTY_CUSTOMIZATION;
-  const customizationInvalid = customizationIssues(customization).length > 0;
 
   const usedTopics = new Set(memoryItems.filter((m) => m.kind === "topic_used").map((m) => m.topicKey));
   const isDuplicate = (idea: Idea) => idea.status === "queued" && usedTopics.has(idea.topicKey);
@@ -73,7 +68,7 @@ export function IdeasPage() {
 
   const generate = async (idea: Idea) => {
     setStarting(true);
-    const postId = await addDraftFromIdea({ id: idea.id, title: idea.title, summary: idea.summary }, customizations[idea.id]);
+    const postId = await addDraftFromIdea({ id: idea.id, title: idea.title, summary: idea.summary });
     setStarting(false);
     if (postId) {
       notify("コンテンツの生成を開始しました");
@@ -175,19 +170,6 @@ export function IdeasPage() {
                     </li>
                   ))}
                 </ol>
-                {selected.status === "queued" ? (
-                  <>
-                    <hr />
-                    <h4>生成前カスタマイズ</h4>
-                    <p className="small muted">未指定なら通常どおり生成します。共通ルールは「ガイドライン」のデザインルールで設定します。</p>
-                    <CustomizationForm
-                      key={selected.id}
-                      value={customization}
-                      onChange={(next) => setCustomizations((prev) => ({ ...prev, [selected.id]: next }))}
-                      disabled={starting}
-                    />
-                  </>
-                ) : null}
                 {referenceTitles.length > 0 ? (
                   <>
                     <hr />
@@ -226,7 +208,7 @@ export function IdeasPage() {
                   </button>
                   <button
                     className="btn primary grow"
-                    disabled={selected.status !== "queued" || starting || customizationInvalid}
+                    disabled={selected.status !== "queued" || starting}
                     onClick={() => void generate(selected)}
                   >
                     {starting ? "開始中…" : `この企画で${SLIDES.length}枚を生成する`}

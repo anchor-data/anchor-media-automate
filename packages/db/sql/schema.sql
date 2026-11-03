@@ -2,14 +2,13 @@ CREATE TABLE IF NOT EXISTS accounts (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   instagram_handle TEXT NOT NULL,
-  canva_template_id TEXT NOT NULL,
+  canva_template_id TEXT NOT NULL DEFAULT '',
   tone TEXT NOT NULL,
   auto_run_enabled INTEGER NOT NULL DEFAULT 0,
   auto_run_schedule TEXT NOT NULL DEFAULT '毎日 18:00',
   last_auto_run_at TEXT,
   image_style_prompt TEXT NOT NULL DEFAULT '',
-  design_rules_json TEXT NOT NULL DEFAULT '{}',
-  template_variants_json TEXT NOT NULL DEFAULT '[]',
+  design_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );

@@ -13,7 +13,6 @@ import {
   DEFAULT_AUTO_RUN_SCHEDULE,
   autoRunSettingsSchema,
   captionWithHashtags,
-  deckExtrasFrom,
   slideFieldsSchema,
   type Guideline,
   type GuidelineUpsert,
@@ -21,7 +20,6 @@ import {
   type MemoryItem,
   type Post,
   type PostAsset,
-  type PostCustomization,
   type Reference,
   type SlideFields
 } from "@ama/shared";
@@ -45,9 +43,9 @@ import {
   listReferences,
   patchIdea,
   putAutoRun,
-  putCanvaTemplate,
   putGuideline,
   regeneratePost,
+  regeneratePostDesign,
   renderPost,
   runIdeation,
   schedulePost
@@ -96,10 +94,8 @@ interface WorkspaceValue {
     schedule: string,
     target: string,
     concept: string,
-    title?: string,
-    canvaTemplateId?: string
+    title?: string
   ) => Promise<void>;
-  saveCanvaTemplate: (accountId: string, templateId: string) => Promise<void>;
   /** Turns scheduled idea+content generation on or off for an account. */
   saveAutoRun: (accountId: string, enabled: boolean, schedule: string) => Promise<void>;
   /** Persists a caption edit (hashtags included in the text) to the API; local-only when offline. */
@@ -111,9 +107,11 @@ interface WorkspaceValue {
   /** Re-export the stored Canva design (preview URLs expire). */
   reloadPostAssets: (id: string) => Promise<void>;
   /** Re-run the creation agent for a draft, optionally with reviewer feedback. */
-  retryGeneration: (id: string, feedback?: string, customization?: PostCustomization) => Promise<void>;
+  retryGeneration: (id: string, feedback?: string) => Promise<void>;
+  /** Another take on a draft's design (free-text prompt optional) and a fresh Canva render. */
+  redesignPost: (id: string, prompt?: string) => Promise<void>;
   /** Creates content from an idea; resolves to the new post id (null on failure). */
-  addDraftFromIdea: (idea: IdeaCandidate, customization?: PostCustomization) => Promise<string | null>;
+  addDraftFromIdea: (idea: IdeaCandidate) => Promise<string | null>;
   rejectIdea: (ideaId: string, reason: string) => Promise<void>;
   generateIdeasFromApi: (input: IdeationInput) => Promise<IdeaCandidate[]>;
   saveGuidelineDetails: (accountId: string, body: GuidelineUpsert) => Promise<void>;
@@ -183,7 +181,6 @@ function errorText(error: unknown): string {
 
 function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[]): MockPost {
   const slides = slideFieldsSchema.safeParse(post.slidesJson);
-  const extras = deckExtrasFrom(post.slidesJson);
   const dateIso = post.scheduledAt ?? post.createdAt;
   return {
     id: post.id,
@@ -209,9 +206,7 @@ function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[
     generationError: post.generationError ?? null,
     assetUrls: assets ? assetUrlsOf(assets) : undefined,
     canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined,
-    slides: slides.success ? slides.data : undefined,
-    customization: extras.customization,
-    report: extras.report
+    slides: slides.success ? slides.data : undefined
   };
 }
 
@@ -258,10 +253,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     setAccounts((prev) =>
       prev.map((a) =>
         a.id === accountId
-          ? {
-              ...mapAccount(accountId, a.handle, guideItem, mem.items, ideaList.items, a),
-              canvaTemplateId: a.canvaTemplateId
-            }
+          ? mapAccount(accountId, a.handle, guideItem, mem.items, ideaList.items, a)
           : a
       )
     );
@@ -304,7 +296,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                   acc.id === firstId ? bundle.ideas : [],
                   INITIAL_ACCOUNTS.find((a) => a.id === acc.id)
                 ),
-                canvaTemplateId: acc.canvaTemplateId,
                 schedule: acc.autoRunSchedule ?? DEFAULT_AUTO_RUN_SCHEDULE,
                 autoRunEnabled: acc.autoRunEnabled ?? false
               }))
@@ -415,17 +406,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       notify,
       refreshAccountSideData,
       refreshPosts,
-      addAccount: async (handle, schedule, target, concept, title, canvaTemplateId) => {
+      addAccount: async (handle, schedule, target, concept, title) => {
         const clean = handle.trim().replace(/^@?/, "@");
         const label = title?.trim() || concept.trim() || target.trim() || "新規アカウント";
         let id = `acc_${Date.now()}`;
         if (apiReady) {
-          if (!canvaTemplateId) throw new Error("Canvaテンプレートを選択してください");
           const created = await createAccountApi({
             name: label,
             instagramHandle: clean,
-            tone: "やさしく実践的",
-            canvaTemplateId
+            tone: "やさしく実践的"
           });
           id = created.item.id;
           // Ideation needs a guideline; empty fields fall back so the account is usable right away.
@@ -450,19 +439,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           schedule,
           systemPrompt: DEFAULT_PROMPT,
           memory: [],
-          ideaQueue: [],
-          canvaTemplateId
+          ideaQueue: []
         };
         setAccounts((prev) => [...prev, account]);
         setActiveAccountId(id);
         setSelectedPostId(null);
         setSelectedIdeaId(null);
-      },
-      saveCanvaTemplate: async (accountId, templateId) => {
-        await putCanvaTemplate(accountId, templateId);
-        setAccounts((prev) =>
-          prev.map((a) => (a.id === accountId ? { ...a, canvaTemplateId: templateId } : a))
-        );
       },
       saveAutoRun: async (accountId, enabled, schedule) => {
         const settings = autoRunSettingsSchema.parse({ enabled, schedule });
@@ -526,22 +508,30 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           notify(`プレビューの更新に失敗しました: ${errorText(error)}`);
         }
       },
-      retryGeneration: async (id, feedback, customization) => {
+      retryGeneration: async (id, feedback) => {
         try {
-          const { item } = await regeneratePost(id, feedback, customization);
+          const { item } = await regeneratePost(id, feedback);
           replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: undefined }));
         } catch (error) {
           notify(`再生成に失敗しました: ${errorText(error)}`);
         }
       },
-      addDraftFromIdea: async (idea, customization) => {
+      redesignPost: async (id, prompt) => {
+        try {
+          const { item } = await regeneratePostDesign(id, prompt);
+          replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: undefined }));
+        } catch (error) {
+          notify(`デザインの再生成に失敗しました: ${errorText(error)}`);
+        }
+      },
+      addDraftFromIdea: async (idea) => {
         const target = targetOf();
         const markSelected = () =>
           setIdeas((prev) => prev.map((i) => (i.id === idea.id ? { ...i, status: "selected" } : i)));
 
         if (apiReady) {
           try {
-            const { item } = await createContent(idea.id, customization);
+            const { item } = await createContent(idea.id);
             setPosts((prev) => [...prev, mapApiPost(item, target)]);
             markSelected();
             return item.id;

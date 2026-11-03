@@ -7,22 +7,10 @@ import {
   type CreationToolContext
 } from "@ama/integrations";
 import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
-import {
-  captionWithHashtags,
-  checkCustomization,
-  deckExtrasFrom,
-  diffSlides,
-  pickTemplateVariant,
-  postCustomizationSchema,
-  slideFieldsSchema,
-  slidesJsonWith,
-  templateCandidates,
-  type Account,
-  type PostCustomization
-} from "@ama/shared";
+import { captionWithHashtags, deckExtrasFrom, slideFieldsSchema, slidesJsonWith } from "@ama/shared";
+import { requestSpecPatch, resolvePostDesign } from "@ama/renderer";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
-import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
 import { renderPost } from "../lib/render";
 
 export const creationRoutes = new Hono<{ Bindings: Bindings }>();
@@ -32,10 +20,7 @@ function toolContext(repo: Repository): CreationToolContext {
     getIdea: (ideaId) => repo.getIdea(ideaId),
     getGuideline: (accountId) => repo.getActiveGuideline(accountId),
     listReferences: (accountId) => repo.listReferences(accountId),
-    getJob: async (jobId) => (await repo.listJobs()).find((job) => job.id === jobId) ?? null,
-    // Only "asset" images are offered for placement; "reference" sheets feed AI generation instead.
-    listImageAssets: (accountId) => repo.listImageAssets(accountId, ["asset"]),
-    getImageStylePrompt: async (accountId) => (await repo.getAccount(accountId))?.imageStylePrompt ?? ""
+    getJob: async (jobId) => (await repo.listJobs()).find((job) => job.id === jobId) ?? null
   };
 }
 
@@ -53,41 +38,14 @@ export async function generatePost(
   const repo = createRepo(env);
   try {
     await repo.updatePost(postId, { generationStatus: "generating_copy", generationError: null });
-    // The customization is stored on the post; the account's design rules are read fresh every run.
+    // A regenerated copy keeps the design the post already has.
     const stored = deckExtrasFrom((await repo.getPost(postId))?.post.slidesJson);
-    const account = await repo.getAccount(input.accountId);
-    const runInput: CreationRunInput = {
-      ...input,
-      customization: input.customization ?? stored.customization,
-      designRules: input.designRules ?? account?.designRules
-    };
-    const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(runInput, toolContext(repo));
-    const previousImages = stored.images;
-    const { images, warnings } = await generateDeckImages(
-      repo,
-      { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
-      input.accountId,
-      output.deck
-    );
-    // Each generation picks the layout variant least recently used, so consecutive posts look different.
-    const templateId = account ? await chooseTemplateId(repo, account) : null;
+    const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(input, toolContext(repo));
     const post = await repo.updatePost(postId, {
       // Hashtags live inside the caption text; the separate list stays empty so there is one source of truth.
       caption: captionWithHashtags(output.deck.caption, output.deck.hashtags),
       hashtags: [],
-      slidesJson: slidesJsonWith(output.deck.slides, {
-        images,
-        templateId,
-        customization: runInput.customization ?? stored.customization,
-        report: {
-          at: new Date().toISOString(),
-          diff: input.previousDeck ? diffSlides(input.previousDeck.slides, output.deck.slides) : [],
-          checks: checkCustomization(
-            { slides: output.deck.slides, images, imagePrompts: output.deck.imagePrompts },
-            runInput.customization ?? stored.customization
-          )
-        }
-      }),
+      slidesJson: slidesJsonWith(output.deck.slides, { images: [], design: stored.design, designPrompt: stored.designPrompt }),
       postType: output.deck.postType
     });
     const run: AgentRun = {
@@ -96,30 +54,14 @@ export async function generatePost(
       createdPostId: postId,
       kind,
       summary: output.summary,
-      outputJson: { reasoning: [...output.reasoning, ...warnings, ...(templateId ? [`template=${templateId}`] : [])], ideaId: input.ideaId }
+      outputJson: { reasoning: output.reasoning, ideaId: input.ideaId }
     };
     await repo.createAgentRun(run);
-    await discardGeneratedImages(repo, env.IMAGE_ASSETS, previousImages);
-    if (post) await renderPost(repo, createCanva(env, repo), post, { imageBucket: env.IMAGE_ASSETS });
+    if (post) await renderPost(repo, createCanva(env, repo), post);
   } catch (error) {
     // renderPost already marks its own failures; this covers agent failures.
     await repo.updatePost(postId, { generationStatus: "failed", generationError: errorMessage(error) });
   }
-}
-
-const RECENT_TEMPLATE_WINDOW = 10;
-
-/**
- * Brand template for the next post: the base template or one of the account's variants, least
- * recently used first. Returns null when the account has no variants (the base template is used).
- */
-async function chooseTemplateId(repo: Repository, account: Account): Promise<string | null> {
-  const candidates = templateCandidates(account.canvaTemplateId, account.templateVariants);
-  if (candidates.length < 2) return null;
-  const recent = (await repo.listPostsByAccount(account.id, RECENT_TEMPLATE_WINDOW)).map(
-    (post) => deckExtrasFrom(post.slidesJson).templateId ?? account.canvaTemplateId
-  );
-  return pickTemplateVariant(candidates, recent)?.id ?? null;
 }
 
 /** Workers: keep running after the 202 response. Local/test runtimes without executionCtx run inline. */
@@ -131,36 +73,13 @@ async function runInBackground(c: { executionCtx: { waitUntil(promise: Promise<u
   }
 }
 
-/** Body shared by create/regenerate: optional per-post customization, validated and checked against the account. */
-async function parseCustomization(
-  repo: Repository,
-  accountId: string,
-  raw: unknown
-): Promise<{ ok: true; value: PostCustomization | undefined } | { ok: false; error: unknown; status: 400 | 422 }> {
-  if (raw === undefined) return { ok: true, value: undefined };
-  const parsed = postCustomizationSchema.safeParse(raw);
-  if (!parsed.success) return { ok: false, error: parsed.error.flatten(), status: 400 };
-  if (parsed.data.graph.enabled && !(await repo.getAccount(accountId))?.imageStylePrompt?.trim()) {
-    return {
-      ok: false,
-      error: "グラフを入れるにはアカウントの画像スタイルプロンプト (アセット > 画像スタイル) を設定してください",
-      status: 422
-    };
-  }
-  return { ok: true, value: parsed.data };
-}
-
 creationRoutes.post("/ideas/:id/create", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { customization?: unknown };
   const repo = createRepo(c.env);
   const idea = await repo.getIdea(c.req.param("id"));
   if (!idea) return c.json({ error: "Idea not found" }, 404);
   if (idea.status === "used" || idea.status === "rejected") {
     return c.json({ error: `Idea is ${idea.status}` }, 409);
   }
-  const customization = await parseCustomization(repo, idea.accountId, body.customization);
-  if (!customization.ok) return c.json({ error: customization.error }, customization.status);
-
   await repo.updateIdea(idea.id, { status: "selected" });
   const { post } = await repo.createPostDraft({
     accountId: idea.accountId,
@@ -168,9 +87,7 @@ creationRoutes.post("/ideas/:id/create", async (c) => {
     caption: "",
     assets: [],
     ideaId: idea.id,
-    generationStatus: "pending",
-    // Kept on the post so regenerate/auto-run reuse it; replaced by the full deck once generated.
-    slidesJson: customization.value ? { customization: customization.value } : undefined
+    generationStatus: "pending"
   });
   await runInBackground(c, generatePost(c.env, post.id, { ideaId: idea.id, accountId: idea.accountId }, "creation"));
   return c.json({ item: post, mode: repo.mode }, 202);
@@ -204,11 +121,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
         caption: parsed.data.caption ?? post.caption,
         hashtags: parsed.data.hashtags ?? post.hashtags ?? []
       };
-      const check = validateDeck(deck, {
-        idea,
-        guideline,
-        imageAssets: await repo.listImageAssets(idea.accountId, ["asset", "reference", "generated"])
-      });
+      const check = validateDeck(deck, { idea, guideline });
       if (!check.ok) return c.json({ error: check.errors }, 422);
     }
   }
@@ -217,7 +130,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
     title: parsed.data.title,
     caption: parsed.data.caption,
     hashtags: parsed.data.hashtags,
-    // Edited text keeps the images the agent chose.
+    // Edited text keeps the post's design.
     slidesJson: slides ? slidesJsonWith(slides, deckExtrasFrom(post.slidesJson)) : undefined,
     // Edited slides make the stored assets stale until POST /posts/:id/render.
     ...(parsed.data.slides ? { generationStatus: "pending" as const } : {})
@@ -226,7 +139,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
 });
 
 creationRoutes.post("/posts/:id/regenerate", async (c) => {
-  const bodySchema = z.object({ feedback: z.string().optional(), customization: z.unknown().optional() });
+  const bodySchema = z.object({ feedback: z.string().optional() });
   const parsed = bodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
@@ -237,22 +150,9 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
   if (!post.ideaId) return c.json({ error: "Post has no source idea to regenerate from" }, 422);
   if (post.status !== "draft") return c.json({ error: `Only draft posts can be regenerated (is ${post.status})` }, 409);
 
-  const customization = await parseCustomization(repo, post.accountId, parsed.data.customization);
-  if (!customization.ok) return c.json({ error: customization.error }, customization.status);
-
   const previous = slideFieldsSchema.safeParse(post.slidesJson);
   const extras = deckExtrasFrom(post.slidesJson);
-  await repo.updatePost(post.id, {
-    generationStatus: "pending",
-    generationError: null,
-    // New instructions replace the stored ones now so a failed run still shows what was asked.
-    slidesJson:
-      customization.value && previous.success
-        ? slidesJsonWith(previous.data, { ...extras, customization: customization.value })
-        : customization.value
-          ? { customization: customization.value }
-          : undefined
-  });
+  await repo.updatePost(post.id, { generationStatus: "pending", generationError: null });
   await runInBackground(
     c,
     generatePost(
@@ -262,7 +162,6 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
         ideaId: post.ideaId,
         accountId: post.accountId,
         feedback: parsed.data.feedback,
-        customization: customization.value,
         previousDeck:
           previous.success && post.postType
             ? { postType: post.postType, slides: previous.data, images: extras.images, caption: post.caption, hashtags: post.hashtags ?? [] }
@@ -274,6 +173,53 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
   return c.json({ item: { ...post, generationStatus: "pending" }, mode: repo.mode }, 202);
 });
 
+/**
+ * Another take on this post's design, then a fresh Canva render. With a prompt the free text is turned
+ * into design changes (keeping the account's guideline in mind); without one the account design is
+ * varied again. Text is untouched.
+ */
+creationRoutes.post("/posts/:id/design/regenerate", async (c) => {
+  const parsed = z.object({ prompt: z.string().max(1000).optional() }).safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+
+  const repo = createRepo(c.env);
+  const detail = await repo.getPost(c.req.param("id"));
+  if (!detail) return c.json({ error: "Post not found" }, 404);
+  const { post } = detail;
+  if (post.status !== "draft") return c.json({ error: `Only draft posts can be redesigned (is ${post.status})` }, 409);
+  const slides = slideFieldsSchema.safeParse(post.slidesJson);
+  if (!slides.success) return c.json({ error: "Post has no slides to redesign yet" }, 409);
+  const account = await repo.getAccount(post.accountId);
+  if (!account) return c.json({ error: "Account not found" }, 404);
+
+  const extras = deckExtrasFrom(post.slidesJson);
+  const prompt = parsed.data.prompt?.trim() ?? "";
+  let design;
+  try {
+    design = prompt
+      ? (
+          await requestSpecPatch({
+            apiKey: c.env.OPENAI_API_KEY,
+            request: prompt,
+            current: resolvePostDesign(account.design?.spec, extras.design, post.id),
+            guideline: account.design?.guideline
+          })
+        ).spec
+      : resolvePostDesign(account.design?.spec, null, `${post.id}:${Date.now()}`);
+  } catch (error) {
+    return c.json({ error: errorMessage(error) }, 502);
+  }
+
+  const updated = await repo.updatePost(post.id, {
+    generationStatus: "pending",
+    generationError: null,
+    slidesJson: slidesJsonWith(slides.data, { ...extras, design, designPrompt: prompt })
+  });
+  if (!updated) return c.json({ error: "Post not found" }, 404);
+  await runInBackground(c, renderPost(repo, createCanva(c.env, repo), updated).catch(() => undefined));
+  return c.json({ item: updated, mode: repo.mode }, 202);
+});
+
 creationRoutes.post("/posts/:id/render", async (c) => {
   const bodySchema = z.object({ reexport: z.boolean().optional() });
   const parsed = bodySchema.safeParse(await c.req.json().catch(() => ({})));
@@ -283,10 +229,7 @@ creationRoutes.post("/posts/:id/render", async (c) => {
   const detail = await repo.getPost(c.req.param("id"));
   if (!detail) return c.json({ error: "Post not found" }, 404);
   try {
-    await renderPost(repo, createCanva(c.env, repo), detail.post, {
-      reexport: parsed.data.reexport,
-      imageBucket: c.env.IMAGE_ASSETS
-    });
+    await renderPost(repo, createCanva(c.env, repo), detail.post, { reexport: parsed.data.reexport });
   } catch (error) {
     return c.json({ error: errorMessage(error) }, 502);
   }

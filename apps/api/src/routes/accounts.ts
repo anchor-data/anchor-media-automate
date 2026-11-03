@@ -1,60 +1,24 @@
 import { Hono } from "hono";
-import { missingTemplateFields, type CanvaClient } from "@ama/integrations";
-import type { Account } from "@ama/shared";
-import { DEFAULT_DESIGN_RULES, autoRunSettingsSchema, designRulesSchema, templateVariantsSchema } from "@ama/shared";
+import { DEFAULT_DESIGN_SPEC, designSpecSchema, requestDesignFromReferences } from "@ama/renderer";
+import type { Account, AccountDesign } from "@ama/shared";
+import { accountDesignSchema, autoRunSettingsSchema } from "@ama/shared";
 import { z } from "zod";
-import { createCanva, createRepo, type Bindings } from "../lib/env";
+import { createRepo, type Bindings } from "../lib/env";
 
 export const accountRoutes = new Hono<{ Bindings: Bindings }>();
-
-type TemplateCheck = { ok: true } | { ok: false; error: string; missing?: string[] };
-
-/** A brand template is usable only if it exposes every s1_* … s8_* autofill field. */
-async function checkTemplate(canva: CanvaClient, templateId: string): Promise<TemplateCheck> {
-  let fields: string[];
-  try {
-    fields = await canva.getTemplateFieldNames(templateId);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "Unexpected error";
-    return { ok: false, error: `Could not read the template: ${reason}` };
-  }
-  const missing = missingTemplateFields(fields);
-  return missing.length > 0
-    ? { ok: false, error: `Template is missing autofill fields: ${missing.join(", ")}`, missing }
-    : { ok: true };
-}
 
 accountRoutes.post("/accounts", async (c) => {
   const bodySchema = z.object({
     name: z.string().min(1),
     instagramHandle: z.string().min(1),
-    tone: z.string().default(""),
-    canvaTemplateId: z.string().min(1)
+    tone: z.string().default("")
   });
   const parsed = bodySchema.safeParse(await c.req.json());
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
   const repo = createRepo(c.env);
-  const check = await checkTemplate(createCanva(c.env, repo), parsed.data.canvaTemplateId);
-  if (!check.ok) return c.json(check, 422);
-
   const account: Account = { id: `acc_${crypto.randomUUID()}`, ...parsed.data };
   return c.json({ item: await repo.createAccount(account), mode: repo.mode }, 201);
-});
-
-/** Select the brand template an account renders with. */
-accountRoutes.put("/accounts/:id/canva-template", async (c) => {
-  const parsed = z.object({ templateId: z.string().min(1) }).safeParse(await c.req.json());
-  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
-
-  const repo = createRepo(c.env);
-  const account = await repo.getAccount(c.req.param("id"));
-  if (!account) return c.json({ error: "Account not found" }, 404);
-
-  const check = await checkTemplate(createCanva(c.env, repo), parsed.data.templateId);
-  if (!check.ok) return c.json(check, 422);
-  const item = await repo.updateAccountTemplate(account.id, parsed.data.templateId);
-  return c.json({ item, mode: repo.mode });
 });
 
 /** Enable/disable the periodic ideation + content run and pick its schedule. */
@@ -68,46 +32,86 @@ accountRoutes.put("/accounts/:id/auto-run", async (c) => {
   return c.json({ item, mode: repo.mode });
 });
 
-/** Account-wide slide design rules; every generated post follows them. */
-accountRoutes.get("/accounts/:id/design-rules", async (c) => {
+/** What the design page shows: the account's design with its spec resolved to a full, valid design. */
+function designView(design: AccountDesign | undefined) {
+  const stored = design ?? accountDesignSchema.parse({});
+  const parsed = designSpecSchema.safeParse(stored.spec ?? {});
+  return { ...stored, spec: parsed.success ? parsed.data : DEFAULT_DESIGN_SPEC, hasDesign: stored.spec !== null };
+}
+
+accountRoutes.get("/accounts/:id/design", async (c) => {
   const repo = createRepo(c.env);
   const account = await repo.getAccount(c.req.param("id"));
   if (!account) return c.json({ error: "Account not found" }, 404);
-  return c.json({ rules: account.designRules ?? DEFAULT_DESIGN_RULES });
+  return c.json({ design: designView(account.design) });
 });
 
-accountRoutes.put("/accounts/:id/design-rules", async (c) => {
-  const parsed = designRulesSchema.safeParse(await c.req.json().catch(() => null));
+/** Reference screenshots: image data URLs or https URLs. */
+const screenshotSchema = z.string().refine((value) => value.startsWith("data:image/") || value.startsWith("https://"), "image data URL or https URL");
+
+/**
+ * Save the written guideline and the reference note without re-deriving the design. (The design
+ * itself is only changed by analyze, so a typo fix in the guideline never throws the look away.)
+ */
+accountRoutes.put("/accounts/:id/design", async (c) => {
+  const parsed = z
+    .object({ guideline: z.string().max(4000).optional(), referenceNote: z.string().max(500).optional() })
+    .safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const repo = createRepo(c.env);
-  const account = await repo.updateAccountDesignRules(c.req.param("id"), parsed.data);
+  const account = await repo.getAccount(c.req.param("id"));
   if (!account) return c.json({ error: "Account not found" }, 404);
-  return c.json({ rules: account.designRules ?? DEFAULT_DESIGN_RULES });
+
+  const current = account.design ?? accountDesignSchema.parse({});
+  const next: AccountDesign = {
+    ...current,
+    guideline: parsed.data.guideline ?? current.guideline,
+    referenceNote: parsed.data.referenceNote ?? current.referenceNote,
+    updatedAt: new Date().toISOString()
+  };
+  const updated = await repo.updateAccountDesign(account.id, next);
+  return c.json({ design: designView(updated?.design) });
 });
 
 /**
- * Extra brand templates (same autofill fields, different layout) that posts rotate through. Each one
- * is checked against the required fields before it is saved, like the base template.
+ * Create the account's design from reference screenshots plus the written guideline. The reference
+ * link is kept as a note only: Instagram content is never fetched, only what the user uploads.
  */
-accountRoutes.get("/accounts/:id/template-variants", async (c) => {
-  const repo = createRepo(c.env);
-  const account = await repo.getAccount(c.req.param("id"));
-  if (!account) return c.json({ error: "Account not found" }, 404);
-  return c.json({ baseTemplateId: account.canvaTemplateId, variants: account.templateVariants ?? [] });
-});
-
-accountRoutes.put("/accounts/:id/template-variants", async (c) => {
-  const parsed = z.object({ variants: templateVariantsSchema }).safeParse(await c.req.json().catch(() => null));
+accountRoutes.post("/accounts/:id/design/analyze", async (c) => {
+  const parsed = z
+    .object({
+      screenshots: z.array(screenshotSchema).max(10).default([]),
+      guideline: z.string().max(4000).optional(),
+      referenceNote: z.string().max(500).optional()
+    })
+    .safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
   const repo = createRepo(c.env);
   const account = await repo.getAccount(c.req.param("id"));
   if (!account) return c.json({ error: "Account not found" }, 404);
 
-  const canva = createCanva(c.env, repo);
-  for (const variant of parsed.data.variants) {
-    const check = await checkTemplate(canva, variant.id);
-    if (!check.ok) return c.json({ ...check, variantId: variant.id }, 422);
+  const current = account.design ?? accountDesignSchema.parse({});
+  const guideline = parsed.data.guideline ?? current.guideline;
+  const referenceNote = parsed.data.referenceNote ?? current.referenceNote;
+  let result;
+  try {
+    result = await requestDesignFromReferences({
+      apiKey: c.env.OPENAI_API_KEY,
+      images: parsed.data.screenshots,
+      guideline,
+      referenceNote
+    });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "Could not create the design" }, 502);
   }
-  const updated = await repo.updateAccountTemplateVariants(account.id, parsed.data.variants);
-  return c.json({ baseTemplateId: account.canvaTemplateId, variants: updated?.templateVariants ?? [] });
+
+  const design: AccountDesign = {
+    spec: result.spec,
+    guideline,
+    referenceNote,
+    summary: result.summary,
+    updatedAt: new Date().toISOString()
+  };
+  const updated = await repo.updateAccountDesign(account.id, design);
+  return c.json({ design: designView(updated?.design) });
 });

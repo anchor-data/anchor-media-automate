@@ -1,11 +1,10 @@
 import { z } from "zod";
-import { designRulesSchema, templateVariantsSchema } from "./customization";
+import { accountDesignSchema } from "./deck-extras";
 
 export const accountSchema = z.object({
   id: z.string(),
   name: z.string(),
   instagramHandle: z.string(),
-  canvaTemplateId: z.string(),
   tone: z.string(),
   /** Periodic ideation + content creation. Off unless an operator enables it. */
   autoRunEnabled: z.boolean().optional(),
@@ -14,10 +13,8 @@ export const accountSchema = z.object({
   lastAutoRunAt: z.string().nullable().optional(),
   /** Fixed image rules (subject, style, palette, background) prepended to every generated slide image prompt. */
   imageStylePrompt: z.string().optional(),
-  /** Account-wide slide design rules (font, title position, emphasis, colors...). */
-  designRules: designRulesSchema.optional(),
-  /** Extra brand templates (same fields, different layout) rotated across posts; empty = base template only. */
-  templateVariants: templateVariantsSchema.optional()
+  /** The account's design: derived from reference screenshots and a written guideline. */
+  design: accountDesignSchema.optional()
 });
 export type Account = z.infer<typeof accountSchema>;
 
@@ -409,4 +406,4 @@ export function captionWithHashtags(caption: string, hashtags: readonly string[]
   return body ? `${body}\n\n${missing.join(" ")}` : missing.join(" ");
 }
 
-export * from "./customization";
+export * from "./deck-extras";

@@ -34,11 +34,7 @@ export {
   CanvaApiClient,
   MockCanvaClient,
   createCanvaClient,
-  REQUIRED_TEMPLATE_FIELDS,
-  missingTemplateFields,
   resolveCanvaDesignId,
-  toAutofillData,
-  type CanvaBrandTemplate,
   type CanvaDraftDesign,
   type CanvaSharedState,
   type CanvaClient,
@@ -47,21 +43,6 @@ export {
   type CanvaThumbnail,
   type CanvaTokenStore
 } from "./canva";
-export { buildDraftPdf } from "./draft-pdf";
-export {
-  DEFAULT_TEMPLATE_STRUCTURE,
-  inferTemplateStructure,
-  parseTemplateStructure,
-  structureFieldNames,
-  type TemplateStructure
-} from "./template-structure";
-export {
-  buildTemplateBrief,
-  parseInstagramHandle,
-  type TemplateBrief,
-  type TemplateBriefInput,
-  type TemplateBriefPage
-} from "./template-brief";
 export {
   MockCreationAgent,
   OpenAICreationAgent,
@@ -242,3 +223,4 @@ export function createInstagramClient(options: IntegrationOptions): InstagramCli
   }
   return new MockInstagramClient();
 }
+export { parseInstagramHandle } from "./instagram";

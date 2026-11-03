@@ -2,14 +2,13 @@
 
 import { useState, type ChangeEvent } from "react";
 import type { MemoryItem, Reference } from "@ama/shared";
-import { DesignRulesPanel } from "../design-rules-panel";
 import { Icon } from "../icon";
 import { PageTopbar, Tabs } from "../ui/page";
 import { useWorkspace } from "../workspace-context";
 import { readAsDataUrl } from "../../lib/read-file";
 import { formatMonthDay } from "../../lib/schedule";
 
-type GuidelineTab = "references" | "memory" | "design";
+type GuidelineTab = "references" | "memory";
 
 const MAX_SCREENSHOTS = 10;
 
@@ -141,18 +140,12 @@ export function GuidelinesPage() {
             onChange={setTab}
             options={[
               { id: "references", label: `参照資料 ${references.length}` },
-              { id: "memory", label: `メモリ ${memoryItems.length}` },
-              { id: "design", label: "デザインルール" }
+              { id: "memory", label: `メモリ ${memoryItems.length}` }
             ]}
           />
           {tab === "references" ? (
             <div className="pad-t-16">
               <ReferenceRows items={references} compact={false} onRemove={dropReference} />
-            </div>
-          ) : null}
-          {tab === "design" ? (
-            <div className="pad-t-16">
-              <DesignRulesPanel />
             </div>
           ) : null}
           {tab === "memory" ? (

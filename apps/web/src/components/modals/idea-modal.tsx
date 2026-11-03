@@ -2,8 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { EMPTY_CUSTOMIZATION, type PostCustomization } from "@ama/shared";
-import { CustomizationForm, customizationIssues } from "../customization-form";
 import { Icon } from "../icon";
 import { useWorkspace } from "../workspace-context";
 import type { IdeaCandidate } from "../../lib/mock-data";
@@ -21,51 +19,8 @@ export function IdeaModal() {
   const [ideas, setIdeas] = useState<readonly IdeaCandidate[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [customizing, setCustomizing] = useState(false);
-  const [customization, setCustomization] = useState<PostCustomization>(EMPTY_CUSTOMIZATION);
 
   const selected = ideas?.find((i) => i.id === selectedId) ?? null;
-
-  if (ideas && customizing && selected) {
-    const issues = customizationIssues(customization);
-    return (
-      <Modal
-        title="生成前カスタマイズ"
-        icon="sliders"
-        width={640}
-        onClose={closeModal}
-        footer={
-          <>
-            <button className="btn ghost" onClick={() => setCustomizing(false)} disabled={busy}>
-              戻る
-            </button>
-            <button
-              className="btn primary"
-              disabled={busy || issues.length > 0}
-              onClick={() => {
-                setBusy(true);
-                void addDraftFromIdea(selected, customization)
-                  .then((postId) => {
-                    if (!postId) return;
-                    notify(apiReady ? "コンテンツの生成を開始しました" : "下書きを作成しました（オフライン）");
-                    closeModal();
-                    router.push("/pipeline");
-                  })
-                  .finally(() => setBusy(false));
-              }}
-            >
-              この内容で生成
-            </button>
-          </>
-        }
-      >
-        <p className="muted" style={{ margin: 0, lineHeight: 1.5 }}>
-          「{selected.title}」への指示です。何も指定しなければ通常どおり生成されます。共通のデザインルールは別途「デザインルール」で設定します。
-        </p>
-        <CustomizationForm value={customization} onChange={setCustomization} disabled={busy} />
-      </Modal>
-    );
-  }
 
   if (ideas) {
     return (
@@ -82,9 +37,20 @@ export function IdeaModal() {
             <button
               className="btn primary"
               disabled={!selected || busy}
-              onClick={() => setCustomizing(true)}
+              onClick={() => {
+                if (!selected) return;
+                setBusy(true);
+                void addDraftFromIdea(selected)
+                  .then((postId) => {
+                    if (!postId) return;
+                    notify(apiReady ? "コンテンツの生成を開始しました" : "下書きを作成しました（オフライン）");
+                    closeModal();
+                    router.push("/pipeline");
+                  })
+                  .finally(() => setBusy(false));
+              }}
             >
-              次へ: 生成前カスタマイズ
+              この企画で投稿を生成
             </button>
           </>
         }

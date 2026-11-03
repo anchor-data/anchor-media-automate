@@ -12,6 +12,7 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview"
   },
   "dependencies": {
+    "@ama/renderer": "workspace:*",
     "@ama/shared": "workspace:*",
     "next": "16.4.2",
     "react": "19.2.8",

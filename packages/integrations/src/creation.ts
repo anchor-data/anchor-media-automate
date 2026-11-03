@@ -1,22 +1,11 @@
 import { Agent, run, setDefaultOpenAIKey, tool } from "@openai/agents";
 import { z } from "zod";
-import {
-  DEFAULT_DESIGN_RULES,
-  EMPTY_CUSTOMIZATION,
-  SLIDE_FIELD_LIMITS,
-  buildGenerationConfig,
-  checkCustomization,
-  isCustomizationEmpty,
-  slideDeckSchema,
-  slideFieldsSchema
-} from "@ama/shared";
+import { SLIDE_FIELD_LIMITS, slideDeckSchema, slideFieldsSchema } from "@ama/shared";
 import type {
-  DesignRules,
   Guideline,
   Idea,
   ImageAsset,
   Job,
-  PostCustomization,
   PostType,
   Reference,
   SlideDeck,
@@ -42,10 +31,6 @@ export type CreationRunInput = {
   /** Operator feedback when regenerating an existing deck. */
   feedback?: string;
   previousDeck?: SlideDeck;
-  /** Per-post instructions entered before generation. */
-  customization?: PostCustomization;
-  /** Account-wide design rules. */
-  designRules?: DesignRules;
 };
 
 export type CreationRunOutput = {
@@ -66,8 +51,6 @@ export type DeckContext = {
   imageAssets?: readonly ImageAsset[];
   /** True when the account has a style prompt, so imagePrompts may be used. */
   imageGeneration?: boolean;
-  /** Per-post instructions the deck must honor. */
-  customization?: PostCustomization;
 };
 
 export type DeckValidation =
@@ -127,14 +110,6 @@ export function validateDeck(raw: unknown, context: DeckContext): DeckValidation
   }
   for (const rule of findNgPhraseViolations(deck, context.guideline.ngRules)) {
     errors.push(`Deck contains an NG phrase: ${rule}`);
-  }
-  if (context.customization) {
-    if (context.customization.graph.enabled && !context.imageGeneration) {
-      errors.push("グラフの指定がありますが、このアカウントには画像スタイルのプロンプトがなくAI画像を生成できません");
-    }
-    for (const check of checkCustomization(deck, context.customization)) {
-      if (!check.ok) errors.push(`カスタマイズ指示が未反映: ${check.label}`);
-    }
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, deck };
 }
@@ -227,22 +202,11 @@ const submitDeckSchema = z.object({
 const getIdeaArgsSchema = z.object({ confirm: z.boolean().nullable() });
 const getJobArgsSchema = z.object({ jobId: z.string() });
 
-/** The user turn for the creation agent: idea, structured generation config, and regenerate context. */
+/** The user turn for the creation agent: the idea plus regenerate context. */
 export function buildCreationUserMessage(ideaId: string, input: CreationRunInput): string {
-  const customized = input.customization && !isCustomizationEmpty(input.customization);
-  const config =
-    input.designRules || customized
-      ? buildGenerationConfig(input.designRules ?? DEFAULT_DESIGN_RULES, input.customization ?? EMPTY_CUSTOMIZATION)
-      : null;
   return [
     `ideaId: ${ideaId}`,
     "Build the 8-slide deck for this idea, then call submit_deck.",
-    config
-      ? `generationConfig (structured; "global" are account-wide design rules that always apply, "post" are this post's instructions, "requirements" are per-page musts):\n${JSON.stringify(config)}`
-      : null,
-    customized && input.customization?.variationSeed
-      ? `variationSeed: ${input.customization.variationSeed} — use it to choose a different angle, layout emphasis and phrasing than a default run would.`
-      : null,
     input.feedback ? `Operator feedback to apply:\n${input.feedback}` : null,
     input.previousDeck ? `Previous deck (improve, do not repeat verbatim):\n${JSON.stringify(input.previousDeck)}` : null
   ]
@@ -321,7 +285,7 @@ export class OpenAICreationAgent implements CreationAgent {
             images: payload.images,
             imagePrompts: payload.imagePrompts
           },
-          { idea, guideline, imageAssets, imageGeneration, customization: input.customization }
+          { idea, guideline, imageAssets, imageGeneration }
         );
         if (!result.ok) {
           state.rejections += 1;
@@ -356,7 +320,6 @@ Required workflow:
    AI illustrations are available: the account has fixed image rules (subject, style, palette, background), applied automatically. For slides where a custom illustration helps (typically the explanation slides 2-6, at most 5), add submit_deck.imagePrompts entries {slot: "s2_image".."s8_image", scene}. Write ONLY what changes for that slide, in English: the subject's action or arrangement, setting, mood, lighting, composition (e.g. \"a person stands in a dark kitchen at night peeking into an open refrigerator, soft blue-white glow\" or \"overhead desk with a notebook and coffee, warm morning light\"). Do not repeat the fixed rules (who/what the subject looks like, art style, colors), and never ask for text in the image. Each scene must match that slide's message. Use a slot for either an uploaded image or a generated one, not both. Pass [] when illustrations add nothing.`
           : ""
       }
-   generationConfig, when present, is binding: apply global design rules (tone of emphasis, emoji/icon policy, readability) to the copy; satisfy every "requirements" line and post.highlightKeywords (use each keyword verbatim in the slide text); honor post.imageMode (none = no images at all, asset_only = uploaded images only, never imagePrompts); follow post.notes. For a graph page, add an imagePrompts entry for that slot whose scene describes a simple chart (e.g. rising bar chart, clean axes) with NO text or numbers in the image, and put the actual numbers/labels in that slide's body text. For evidence, state the source or figure in the body text of the requested page within its character limit.
 3) If submit_deck returns ok:false, fix exactly the listed errors and call it again.
 4) Do not answer in free text — submit_deck is your final output.`,
       tools: [get_idea, get_guideline, list_references, list_image_assets, get_job, submit_deck],

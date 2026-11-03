@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Guideline, Idea, Job } from "@ama/shared";
-import { DEFAULT_DESIGN_RULES, postCustomizationSchema, slideFieldsSchema } from "@ama/shared";
+import { slideFieldsSchema } from "@ama/shared";
 import { MockCreationAgent, buildCreationUserMessage, expectedPostType, validateDeck } from "../creation";
 
 const idea: Idea = {
@@ -231,83 +231,17 @@ describe("validateDeck imagePrompts", () => {
   });
 });
 
-describe("validateDeck with customization", () => {
-  const base = { postType: "knowhow", slides: validSlides(), caption: "c", hashtags: ["#a"] };
-  const assets = [{ id: "a1" }] as never;
-
-  it("rejects a deck missing the requested graph page", () => {
-    const customization = postCustomizationSchema.parse({ graph: { enabled: true, page: 4 } });
-    const result = validateDeck(
-      { ...base, imagePrompts: [{ slot: "s2_image", scene: "bar chart" }] },
-      { idea, guideline, imageGeneration: true, customization }
-    );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.join()).toContain("4ページ目にグラフ");
-  });
-
-  it("accepts a deck that satisfies the graph page", () => {
-    const customization = postCustomizationSchema.parse({ graph: { enabled: true, page: 4 } });
-    const result = validateDeck(
-      { ...base, imagePrompts: [{ slot: "s4_image", scene: "bar chart" }] },
-      { idea, guideline, imageGeneration: true, customization }
-    );
-    expect(result.ok).toBe(true);
-  });
-
-  it("rejects a graph request when AI illustrations are not enabled", () => {
-    const customization = postCustomizationSchema.parse({ graph: { enabled: true, page: 4 } });
-    const result = validateDeck(base, { idea, guideline, imageGeneration: false, customization });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors.join()).toContain("画像スタイル");
-  });
-
-  it("rejects images when image mode is none", () => {
-    const customization = postCustomizationSchema.parse({ imageMode: "none" });
-    const result = validateDeck(
-      { ...base, images: [{ slot: "s1_image", assetId: "a1" }] },
-      { idea, guideline, imageAssets: assets, customization }
-    );
-    expect(result.ok).toBe(false);
-  });
-
-  it("requires highlight keywords to appear", () => {
-    const customization = postCustomizationSchema.parse({ highlightKeywords: ["年収"] });
-    expect(validateDeck(base, { idea, guideline, customization }).ok).toBe(false);
-    const withWord = { ...base, slides: { ...validSlides(), s3_body: "年収アップ" } };
-    expect(validateDeck(withWord, { idea, guideline, customization }).ok).toBe(true);
-  });
-});
-
 describe("buildCreationUserMessage", () => {
-  it("embeds the structured config only when something is customized", () => {
-    const plain = buildCreationUserMessage(idea.id, { ideaId: idea.id, accountId: idea.accountId });
-    expect(plain).not.toContain("generationConfig");
+  const base = { ideaId: idea.id, accountId: idea.accountId };
 
-    const message = buildCreationUserMessage(idea.id, {
-      ideaId: idea.id,
-      accountId: idea.accountId,
-      customization: postCustomizationSchema.parse({
-        highlightKeywords: ["年収"],
-        evidence: { enabled: true, page: 5 },
-        variationSeed: "seed-7"
-      })
-    });
-    expect(message).toContain("generationConfig");
-    expect(message).toContain("年収");
-    expect(message).toContain("5ページ目にエビデンス");
-    expect(message).toContain("seed-7");
+  it("names the idea and asks for submit_deck", () => {
+    const message = buildCreationUserMessage(idea.id, base);
+    expect(message).toContain(idea.id);
+    expect(message).toContain("submit_deck");
   });
 
-  it("always includes the global design rules when provided", () => {
-    const message = buildCreationUserMessage(idea.id, {
-      ideaId: idea.id,
-      accountId: idea.accountId,
-      designRules: { ...postDefaults(), emphasisRule: "黄色マーカー" }
-    });
-    expect(message).toContain("黄色マーカー");
+  it("adds operator feedback and the previous deck when regenerating", () => {
+    const message = buildCreationUserMessage(idea.id, { ...base, feedback: "もっと短く" });
+    expect(message).toContain("もっと短く");
   });
 });
-
-function postDefaults() {
-  return DEFAULT_DESIGN_RULES;
-}

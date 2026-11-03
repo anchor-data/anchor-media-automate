@@ -1,53 +1,27 @@
 import type { Repository } from "@ama/db";
-import { resolveSlideImages, type CanvaClient } from "@ama/integrations";
-import { deckExtrasFrom, resolveTemplateId, slideImagesFrom, slideFieldsSchema } from "@ama/shared";
+import type { CanvaClient } from "@ama/integrations";
+import { PPTX_MIME, renderDeckPptx, resolvePostDesign } from "@ama/renderer";
+import { deckExtrasFrom, slideFieldsSchema, slidesJsonWith } from "@ama/shared";
 import type { Post } from "@ama/shared";
-import { imageAssetKey } from "./image-assets";
 
 export const EXPECTED_PAGE_COUNT = 8;
-
-/** Canva autofill image fields (slot → Canva asset id) for the images chosen on a post. */
-async function loadSlideImages(
-  repo: Repository,
-  canva: CanvaClient,
-  post: Post,
-  templateId: string,
-  bucket: R2Bucket | undefined
-): Promise<Record<string, string>> {
-  const images = slideImagesFrom(post.slidesJson);
-  if (images.length === 0) return {};
-  if (!bucket) throw new Error("Post uses images but image storage (R2 IMAGE_ASSETS) is not configured");
-  return resolveSlideImages({
-    images,
-    assets: await repo.listImageAssets(post.accountId, ["asset", "reference", "generated"]),
-    templateFields: await canva.getTemplateFieldNames(templateId),
-    upload: async (asset) => {
-      const object = await bucket.get(imageAssetKey(asset.id));
-      if (!object) throw new Error(`Image file missing in storage: ${asset.label}`);
-      const { assetId } = await canva.uploadAsset({
-        name: asset.label,
-        bytes: new Uint8Array(await object.arrayBuffer())
-      });
-      await repo.setImageAssetCanvaId(asset.id, assetId);
-      return assetId;
-    }
-  });
-}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unexpected error";
 }
 
 /**
- * Render a post's slides through Canva and store one post_assets row per page.
- * `reexport` skips autofill and only re-exports the stored design (preview URLs expire,
- * the design id is the source of truth).
+ * Render a post's slides: the post's design + copy become a PPTX, Canva imports it as an editable
+ * design, and Canva's PNG export of each page is stored as the preview (one post_assets row per page).
+ *
+ * `reexport` skips the import and only re-exports the stored design, so edits a human made in Canva
+ * show up here (preview URLs also expire; the design id is the source of truth).
  */
 export async function renderPost(
   repo: Repository,
   canva: CanvaClient,
   post: Post,
-  options: { reexport?: boolean; imageBucket?: R2Bucket } = {}
+  options: { reexport?: boolean } = {}
 ): Promise<void> {
   try {
     await repo.updatePost(post.id, { generationStatus: "rendering", generationError: null });
@@ -57,23 +31,18 @@ export async function renderPost(
     const account = await repo.getAccount(post.accountId);
     if (!account) throw new Error(`Account not found: ${post.accountId}`);
 
-    // A post keeps the layout variant it was generated with; unregistered ones fall back to the base template.
-    const templateId = resolveTemplateId(
-      account.canvaTemplateId,
-      account.templateVariants,
-      deckExtrasFrom(post.slidesJson).templateId
-    );
     let designId = storedDesignId;
     if (!options.reexport || !designId) {
       const slides = slideFieldsSchema.safeParse(post.slidesJson);
       if (!slides.success) throw new Error("Post has no valid slides to render");
-      const images = await loadSlideImages(repo, canva, post, templateId, options.imageBucket);
-      ({ designId } = await canva.autofill({
-        templateId,
-        fields: slides.data,
-        images,
-        title: post.title
-      }));
+      const extras = deckExtrasFrom(post.slidesJson);
+      // Chosen once and stored, so later renders and text edits keep the same look.
+      const design = resolvePostDesign(account.design?.spec, extras.design, post.id);
+      if (!extras.design) {
+        await repo.updatePost(post.id, { slidesJson: slidesJsonWith(slides.data, { ...extras, design }) });
+      }
+      const pptx = await renderDeckPptx({ spec: design, fields: slides.data, handle: account.instagramHandle });
+      ({ designId } = await canva.importFile({ title: post.title, bytes: pptx, mimeType: PPTX_MIME }));
     }
 
     const urls = await canva.exportPages(designId);
@@ -82,12 +51,7 @@ export async function renderPost(
     }
     await repo.replacePostAssets(
       post.id,
-      urls.map((imageUrl, slideIndex) => ({
-        imageUrl,
-        slideIndex,
-        canvaDesignId: designId,
-        templateId
-      }))
+      urls.map((imageUrl, slideIndex) => ({ imageUrl, slideIndex, canvaDesignId: designId }))
     );
     await repo.updatePost(post.id, { generationStatus: "ready", generationError: null });
   } catch (error) {

@@ -1,14 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  CanvaApiClient,
-  REQUIRED_TEMPLATE_FIELDS,
-  missingTemplateFields,
-  resolveCanvaDesignId,
-  toAutofillData,
-  type CanvaDesignCache,
-  type CanvaTokenStore
-} from "../canva";
-import { DEFAULT_TEMPLATE_STRUCTURE } from "../template-structure";
+import { CanvaApiClient, resolveCanvaDesignId, type CanvaDesignCache, type CanvaTokenStore } from "../canva";
 
 function memoryStore(initial: string | null): CanvaTokenStore & { current: () => string | null } {
   let token = initial;
@@ -34,24 +25,6 @@ function routedFetch(routes: Record<string, (init?: RequestInit) => Response>) {
 }
 
 const noSleep = async () => undefined;
-
-describe("toAutofillData", () => {
-  it("wraps every field as a Canva text value", () => {
-    expect(toAutofillData({ s1_title: "T", s1_sub: "S" })).toEqual({
-      s1_title: { type: "text", text: "T" },
-      s1_sub: { type: "text", text: "S" }
-    });
-  });
-});
-
-describe("toAutofillData with images", () => {
-  it("adds image fields that reference Canva asset ids", () => {
-    expect(toAutofillData({ s1_title: "T" }, { s1_image: "asset_1" })).toEqual({
-      s1_title: { type: "text", text: "T" },
-      s1_image: { type: "image", asset_id: "asset_1" }
-    });
-  });
-});
 
 describe("resolveCanvaDesignId", () => {
   it("reads the id from a design url", async () => {
@@ -222,109 +195,8 @@ describe("CanvaApiClient token handling", () => {
   });
 });
 
-describe("CanvaApiClient autofill and export", () => {
+describe("CanvaApiClient export", () => {
   const tokenRoute = { "/oauth/token": () => json({ access_token: "at" }) };
-
-  it("autofills text fields and returns the design id once the job succeeds", async () => {
-    let polls = 0;
-    const fetchImpl = routedFetch({
-      ...tokenRoute,
-      "/autofills": () => json({ job: { id: "j1", status: "in_progress" } }),
-      "/autofills/j1": () => {
-        polls += 1;
-        return json({ job: { id: "j1", status: "success", result: { design: { id: "DNEW" } } } });
-      }
-    });
-    const client = new CanvaApiClient({
-      clientId: "id",
-      clientSecret: "secret",
-      tokenStore: memoryStore("rt"),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-      sleep: noSleep
-    });
-
-    const result = await client.autofill({ templateId: "tpl", fields: { s1_title: "Hi" }, title: "Deck" });
-
-    expect(result).toEqual({ designId: "DNEW" });
-    expect(polls).toBe(1);
-    const post = fetchImpl.mock.calls.find(([url]) => String(url).endsWith("/autofills"))!;
-    expect(JSON.parse(String(post[1]!.body))).toEqual({
-      brand_template_id: "tpl",
-      title: "Deck",
-      data: { s1_title: { type: "text", text: "Hi" } }
-    });
-  });
-
-  it("sends image fields alongside text when asset ids are given", async () => {
-    const fetchImpl = routedFetch({
-      ...tokenRoute,
-      "/autofills": () => json({ job: { id: "j1", status: "success", result: { design: { id: "D" } } } })
-    });
-    const client = new CanvaApiClient({
-      clientId: "id",
-      clientSecret: "secret",
-      tokenStore: memoryStore("rt"),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-      sleep: noSleep
-    });
-    await client.autofill({ templateId: "tpl", fields: { s1_title: "Hi" }, images: { s2_image: "A1" } });
-    const post = fetchImpl.mock.calls.find(([url]) => String(url).endsWith("/autofills"))!;
-    expect(JSON.parse(String(post[1]!.body)).data).toEqual({
-      s1_title: { type: "text", text: "Hi" },
-      s2_image: { type: "image", asset_id: "A1" }
-    });
-  });
-
-  it("uploads an image as a Canva asset and returns its id", async () => {
-    const fetchImpl = routedFetch({
-      ...tokenRoute,
-      "/asset-uploads": () => json({ job: { id: "u1", status: "in_progress" } }),
-      "/asset-uploads/u1": () => json({ job: { id: "u1", status: "success", asset: { id: "ASSET9" } } })
-    });
-    const client = new CanvaApiClient({
-      clientId: "id",
-      clientSecret: "secret",
-      tokenStore: memoryStore("rt"),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-      sleep: noSleep
-    });
-    const result = await client.uploadAsset({ name: "ロゴ", bytes: new Uint8Array([1, 2, 3]) });
-    expect(result).toEqual({ assetId: "ASSET9" });
-    const post = fetchImpl.mock.calls.find(([url]) => String(url).endsWith("/asset-uploads"))!;
-    const headers = post[1]!.headers as Record<string, string>;
-    expect(headers["Content-Type"]).toBe("application/octet-stream");
-    expect(JSON.parse(headers["Asset-Upload-Metadata"]!).name_base64).toBe(btoa(String.fromCharCode(...new TextEncoder().encode("ロゴ"))));
-  });
-
-  it("fails when the upload job finishes without an asset id", async () => {
-    const fetchImpl = routedFetch({
-      ...tokenRoute,
-      "/asset-uploads": () => json({ job: { id: "u1", status: "success" } })
-    });
-    const client = new CanvaApiClient({
-      clientId: "id",
-      clientSecret: "secret",
-      tokenStore: memoryStore("rt"),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-      sleep: noSleep
-    });
-    await expect(client.uploadAsset({ name: "x", bytes: new Uint8Array([1]) })).rejects.toThrow(/asset id/);
-  });
-
-  it("surfaces a failed Canva job", async () => {
-    const fetchImpl = routedFetch({
-      ...tokenRoute,
-      "/autofills": () => json({ job: { id: "j1", status: "failed", error: { message: "bad field" } } })
-    });
-    const client = new CanvaApiClient({
-      clientId: "id",
-      clientSecret: "secret",
-      tokenStore: memoryStore("rt"),
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-      sleep: noSleep
-    });
-    await expect(client.autofill({ templateId: "tpl", fields: {} })).rejects.toThrow(/bad field/);
-  });
 
   it("exports every page and serves repeat calls from the cache", async () => {
     const cache = new Map<string, string[]>();
@@ -354,6 +226,20 @@ describe("CanvaApiClient autofill and export", () => {
     expect(fetchImpl.mock.calls.length).toBe(callsAfterFirst);
   });
 
+  it("surfaces a failed export job", async () => {
+    const client = new CanvaApiClient({
+      clientId: "id",
+      clientSecret: "secret",
+      tokenStore: memoryStore("rt"),
+      sleep: noSleep,
+      fetchImpl: routedFetch({
+        ...tokenRoute,
+        "/exports": () => json({ job: { id: "e2", status: "failed", error: { message: "bad design" } } })
+      }) as unknown as typeof fetch
+    });
+    await expect(client.exportPages("D2")).rejects.toThrow(/bad design/);
+  });
+
   it("returns null when the design has no thumbnail", async () => {
     const client = new CanvaApiClient({
       clientId: "id",
@@ -365,66 +251,13 @@ describe("CanvaApiClient autofill and export", () => {
   });
 });
 
-describe("brand templates", () => {
+describe("importFile", () => {
   const tokenRoute = { "/oauth/token": () => json({ access_token: "at" }) };
-  const client = (routes: Record<string, (init?: RequestInit) => Response>) =>
-    new CanvaApiClient({
-      clientId: "id",
-      clientSecret: "secret",
-      tokenStore: memoryStore("rt"),
-      fetchImpl: routedFetch({ ...tokenRoute, ...routes }) as unknown as typeof fetch
-    });
+  const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  const done = { job: { id: "J5", status: "success", result: { designs: [{ id: "D5", urls: { edit_url: "https://canva.com/edit/D5" } }] } } };
 
-  it("requires all 21 slide fields", () => {
-    expect(REQUIRED_TEMPLATE_FIELDS).toHaveLength(21);
-    expect(missingTemplateFields(REQUIRED_TEMPLATE_FIELDS)).toEqual([]);
-    expect(missingTemplateFields(["s1_title"])).toContain("s8_cta");
-  });
-
-  it("lists templates across pages", async () => {
-    const result = await client({
-      "?limit=50": () =>
-        json({ items: [{ id: "T1", title: "One", thumbnail: { url: "https://t/1" } }], continuation: "c2" }),
-      "&continuation=c2": () => json({ items: [{ id: "T2" }] })
-    }).listBrandTemplates();
-    expect(result.map((t) => t.id)).toEqual(["T1", "T2"]);
-    expect(result[0]!.thumbnailUrl).toBe("https://t/1");
-    expect(result[1]!.title).toBe("T2");
-  });
-
-  it("reads dataset field names", async () => {
-    const names = await client({
-      "/brand-templates/T1/dataset": () => json({ dataset: { s1_title: { type: "text" }, s1_sub: { type: "text" } } })
-    }).getTemplateFieldNames("T1");
-    expect(names).toEqual(["s1_title", "s1_sub"]);
-  });
-
-  it("creates a blank 1080x1350 draft design", async () => {
-    let sent: unknown;
-    const draft = await client({
-      "/designs": (init) => {
-        sent = JSON.parse(String(init?.body));
-        return json({ design: { id: "D9", urls: { edit_url: "https://canva.com/edit/D9" } } });
-      }
-    }).createDraftDesign({ title: "wakaru template" });
-    expect(sent).toEqual({
-      design_type: { type: "custom", width: 1080, height: 1350 },
-      title: "wakaru template"
-    });
-    expect(draft).toEqual({ designId: "D9", editUrl: "https://canva.com/edit/D9" });
-  });
-
-  it("fails when Canva returns no design id", async () => {
-    await expect(client({ "/designs": () => json({ design: {} }) }).createDraftDesign({ title: "x" })).rejects.toThrow(
-      /design id/
-    );
-  });
-
-  it("imports a multi-page pdf when a structure is given", async () => {
-    let metadata: string | null = null;
-    let contentType: string | null = null;
-    let bodyBytes = 0;
-    const importing = new CanvaApiClient({
+  function importing(onImport: (init?: RequestInit) => void) {
+    return new CanvaApiClient({
       clientId: "id",
       clientSecret: "secret",
       tokenStore: memoryStore("rt"),
@@ -432,46 +265,33 @@ describe("brand templates", () => {
       fetchImpl: routedFetch({
         ...tokenRoute,
         "/imports": (init) => {
-          const headers = init?.headers as Record<string, string>;
-          metadata = headers["Import-Metadata"] ?? null;
-          contentType = headers["Content-Type"] ?? null;
-          bodyBytes = (init?.body as Uint8Array).byteLength;
-          return json({ job: { id: "J1", status: "in_progress" } });
-        },
-        "/imports/J1": () =>
-          json({
-            job: {
-              id: "J1",
-              status: "success",
-              result: { designs: [{ id: "D7", urls: { edit_url: "https://canva.com/edit/D7" } }] }
-            }
-          })
+          onImport(init);
+          return json(done);
+        }
       }) as unknown as typeof fetch
     });
+  }
 
-    const draft = await importing.createDraftDesign({ title: "wakaru", structure: DEFAULT_TEMPLATE_STRUCTURE });
-
-    expect(draft).toEqual({ designId: "D7", editUrl: "https://canva.com/edit/D7" });
-    expect(contentType).toBe("application/octet-stream");
-    expect(bodyBytes).toBeGreaterThan(100);
-    const decoded = JSON.parse(metadata ?? "") as { title_base64: string; mime_type: string };
-    expect(decoded.mime_type).toBe("application/pdf");
-    expect(atob(decoded.title_base64)).toBe("wakaru");
+  it("sends the given mime type", async () => {
+    let meta = "";
+    await importing((init) => {
+      meta = (init?.headers as Record<string, string>)["Import-Metadata"] ?? "";
+    }).importFile({ title: "deck", bytes: new Uint8Array([1]), mimeType: PPTX });
+    expect((JSON.parse(meta) as { mime_type: string }).mime_type).toBe(PPTX);
   });
 
-  it("fails when the import job fails", async () => {
-    const importing = new CanvaApiClient({
-      clientId: "id",
-      clientSecret: "secret",
-      tokenStore: memoryStore("rt"),
-      sleep: noSleep,
-      fetchImpl: routedFetch({
-        ...tokenRoute,
-        "/imports": () => json({ job: { id: "J2", status: "failed", error: { message: "bad pdf" } } })
-      }) as unknown as typeof fetch
-    });
-    await expect(
-      importing.createDraftDesign({ title: "x", structure: DEFAULT_TEMPLATE_STRUCTURE })
-    ).rejects.toThrow(/bad pdf/);
+  it("keeps the title within Canva's 50 character limit", async () => {
+    let meta = "";
+    await importing((init) => {
+      meta = (init?.headers as Record<string, string>)["Import-Metadata"] ?? "";
+    }).importFile({ title: "あ".repeat(80), bytes: new Uint8Array([1]), mimeType: PPTX });
+    const title = new TextDecoder().decode(Uint8Array.from(atob((JSON.parse(meta) as { title_base64: string }).title_base64), (c) => c.charCodeAt(0)));
+    expect(Array.from(title).length).toBe(50);
+  });
+
+  it("the mock client accepts any file", async () => {
+    const { MockCanvaClient } = await import("../canva");
+    const design = await new MockCanvaClient().importFile({ title: "x", bytes: new Uint8Array([1]), mimeType: PPTX });
+    expect(design.designId).toMatch(/^design_/);
   });
 });

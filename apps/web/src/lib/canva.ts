@@ -1,8 +1,3 @@
-/** Canva page where a brand template can be viewed and used. */
-export function canvaTemplateUrl(templateId: string): string {
-  return `https://www.canva.com/brand/brand-templates/${encodeURIComponent(templateId)}`;
-}
-
 /** Real Canva design ids start with "D"; the mock client's ids do not, so they get no link. */
 const CANVA_DESIGN_ID_RE = /^D[A-Za-z0-9_-]{9,}$/;
 
