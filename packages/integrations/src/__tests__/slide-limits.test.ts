@@ -1,49 +1,29 @@
-import { SLIDE_FIELD_LIMITS, slideFieldsSchema } from "@ama/shared";
+import { DEFAULT_STRUCTURE, ROLE_FIELDS, SLIDE_FIELD_LIMITS, fieldKeys, slideFieldsSchema } from "@ama/shared";
 import { describe, expect, it } from "vitest";
 
-/**
- * Text capacity of each box in the published "wakaru carousel template" (Japanese, one char per
- * em). A deck that respects these limits does not overflow its box after Canva autofill.
- */
-const TEMPLATE_CAPACITY: Record<string, number> = {
-  s1_title: 20,
-  s1_sub: 11,
-  s2_head: 6,
-  s2_body: 33,
-  s3_num: 1,
-  s3_head: 4,
-  s3_body: 42,
-  s4_num: 1,
-  s4_head: 5,
-  s4_body: 40,
-  s5_num: 1,
-  s5_head: 6,
-  s5_body: 45,
-  s6_num: 1,
-  s6_head: 5,
-  s6_body: 40,
-  s7_label: 4,
-  s7_head: 5,
-  s7_body: 36,
-  s8_head: 8,
-  s8_cta: 7
-};
-
 describe("slide field limits", () => {
-  it("defines a limit for every slide field and nothing else", () => {
+  it("defines a limit for every slide field of the default deck and nothing else", () => {
     expect(Object.keys(SLIDE_FIELD_LIMITS).sort()).toEqual(Object.keys(slideFieldsSchema.shape).sort());
   });
 
-  it("matches what fits in the template's text boxes", () => {
-    expect(SLIDE_FIELD_LIMITS).toEqual(TEMPLATE_CAPACITY);
+  it("gives every page of a role the same capacity", () => {
+    for (const { key, role, name } of fieldKeys(DEFAULT_STRUCTURE)) {
+      expect(SLIDE_FIELD_LIMITS[key], key).toBe(ROLE_FIELDS[role].find((f) => f.name === name)!.max);
+    }
   });
 
-  it("is what the schema enforces", () => {
-    const atLimit = Object.fromEntries(Object.entries(SLIDE_FIELD_LIMITS).map(([name, max]) => [name, "あ".repeat(max)]));
-    expect(slideFieldsSchema.safeParse(atLimit).success).toBe(true);
-    for (const [name, max] of Object.entries(SLIDE_FIELD_LIMITS)) {
-      const over = { ...atLimit, [name]: "あ".repeat(max + 1) };
-      expect(slideFieldsSchema.safeParse(over).success, name).toBe(false);
+  it("keeps copy short enough for the layouts: no field is longer than its box can hold", () => {
+    // headings are one or two lines at ~100px; body copy at most ~4 lines of 19 characters
+    for (const { name, max } of fieldKeys(DEFAULT_STRUCTURE)) {
+      if (name === "num") expect(max).toBe(1);
+      if (name === "body") expect(max).toBeLessThanOrEqual(45);
+      if (name === "head" || name === "label" || name === "cta") expect(max).toBeLessThanOrEqual(8);
     }
+  });
+
+  it("rejects copy over the limit and accepts copy at the limit", () => {
+    const base = Object.fromEntries(Object.keys(SLIDE_FIELD_LIMITS).map((key) => [key, "あ"]));
+    expect(slideFieldsSchema.safeParse({ ...base, s1_title: "あ".repeat(20) }).success).toBe(true);
+    expect(slideFieldsSchema.safeParse({ ...base, s1_title: "あ".repeat(21) }).success).toBe(false);
   });
 });

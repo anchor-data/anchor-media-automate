@@ -14,6 +14,7 @@ import type {
   SlideFields
 } from "@ama/shared";
 
+import type { SlideRole } from "@ama/shared";
 import type { DesignSpec } from "@ama/renderer/src/spec";
 
 const API_BASE_URL = "/api";
@@ -215,8 +216,11 @@ export type AccountDesignView = {
   referenceNote: string;
   summary: string;
   updatedAt: string | null;
-  /** What deriving the design cost (USD). */
+  /** What deriving the design and structure cost (USD). */
   analysisCostUsd: number;
+  /** Page structure of the account's posts (3-10 pages, cover first, CTA last). */
+  structure: SlideRole[];
+  structureSummary: string;
   hasDesign: boolean;
 };
 
@@ -335,5 +339,20 @@ export async function saveImageStyle(accountId: string, prompt: string) {
   return request<{ prompt: string }>(`/accounts/${accountId}/image-style`, {
     method: "PUT",
     body: JSON.stringify({ prompt })
+  });
+}
+
+/** Infer the page structure from reference screenshots; the proposal is saved and can be adjusted. */
+export async function analyzeAccountStructure(accountId: string, screenshots: string[]) {
+  return request<{ design: AccountDesignView }>(`/accounts/${accountId}/structure/analyze`, {
+    method: "POST",
+    body: JSON.stringify({ screenshots })
+  });
+}
+
+export async function saveAccountStructure(accountId: string, structure: SlideRole[]) {
+  return request<{ design: AccountDesignView }>(`/accounts/${accountId}/structure`, {
+    method: "PUT",
+    body: JSON.stringify({ structure })
   });
 }

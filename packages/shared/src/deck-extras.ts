@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_STRUCTURE, deckStructureSchema, slideFieldsSchemaFor, type SlideRole } from "./deck-structure";
 import type { SlideFields, SlideImage } from "./index";
 
 /**
@@ -15,7 +16,11 @@ export const accountDesignSchema = z.object({
   summary: z.string().max(1000).default(""),
   updatedAt: z.string().nullable().default(null),
   /** What deriving this design cost (USD), as measured from the model's token usage. */
-  analysisCostUsd: z.number().min(0).default(0)
+  analysisCostUsd: z.number().min(0).default(0),
+  /** The account's page structure: which pages a post has, in order. */
+  structure: deckStructureSchema.default(() => [...DEFAULT_STRUCTURE]),
+  /** The AI's one-line description of the structure it inferred from the references. */
+  structureSummary: z.string().max(500).default("")
 });
 export type AccountDesign = z.infer<typeof accountDesignSchema>;
 
@@ -44,6 +49,8 @@ export interface DeckExtras {
   /** The last free-text request used to regenerate this post's design. */
   designPrompt: string;
   costUsd: PostCost;
+  /** Pages of this post's deck; null = the default 8 pages (posts made before structures existed). */
+  structure: SlideRole[] | null;
 }
 
 /**
@@ -55,11 +62,13 @@ export function deckExtrasFrom(slidesJson: unknown): DeckExtras {
   const images = imageListSchema.safeParse(raw.images);
   const design = z.record(z.string(), z.unknown()).safeParse(raw.design);
   const cost = postCostSchema.safeParse(raw.costUsd);
+  const structure = deckStructureSchema.safeParse(raw.structure);
   return {
     images: images.success ? (images.data as SlideImage[]) : [],
     design: design.success ? design.data : null,
     designPrompt: typeof raw.designPrompt === "string" ? raw.designPrompt : "",
-    costUsd: cost.success ? cost.data : postCostSchema.parse({})
+    costUsd: cost.success ? cost.data : postCostSchema.parse({}),
+    structure: structure.success ? structure.data : null
   };
 }
 
@@ -70,6 +79,17 @@ export function slidesJsonWith(slides: SlideFields, extras: DeckExtras): Record<
     images: extras.images,
     ...(extras.design ? { design: extras.design } : {}),
     ...(extras.designPrompt ? { designPrompt: extras.designPrompt } : {}),
-    ...(totalCost(extras.costUsd) > 0 ? { costUsd: extras.costUsd } : {})
+    ...(totalCost(extras.costUsd) > 0 ? { costUsd: extras.costUsd } : {}),
+    ...(extras.structure ? { structure: extras.structure } : {})
   };
+}
+
+/**
+ * The text of a stored deck, validated against the structure stored on the post (the default 8 pages
+ * for older posts). Null when a field is missing or over its limit.
+ */
+export function parseDeckSlides(slidesJson: unknown): { structure: SlideRole[]; slides: SlideFields } | null {
+  const structure = deckExtrasFrom(slidesJson).structure ?? [...DEFAULT_STRUCTURE];
+  const parsed = slideFieldsSchemaFor(structure).safeParse(slidesJson);
+  return parsed.success ? { structure, slides: parsed.data as SlideFields } : null;
 }

@@ -1,5 +1,6 @@
+import { DEFAULT_STRUCTURE, roleOf, type SlideRole } from "@ama/shared";
 import type { DesignSpec } from "./spec";
-import { wrapJapanese } from "./wrap";
+import { textUnits, wrapJapanese } from "./wrap";
 
 /**
  * Layout of one slide as a flat list of elements (shapes, text, images) in paint order. Both the HTML
@@ -10,7 +11,7 @@ export const SLIDE_WIDTH = 1080;
 export const SLIDE_HEIGHT = 1350;
 
 export type SlideFieldsLike = Readonly<Record<string, string>>;
-export type SlideKind = "cover" | "empathy" | "point" | "pick" | "cta";
+export type SlideKind = SlideRole;
 export type Align = "left" | "center" | "right";
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -42,20 +43,28 @@ export interface LayoutInput {
   handle: string;
   /** Image data URLs by slot (`s3_image`). A page with an image gets an image layout. */
   images?: Readonly<Record<string, string>>;
+  /** Pages of the deck (the account's structure). Default: the 8-page deck. */
+  structure?: readonly SlideRole[];
 }
 
-/** Role of each of the 8 pages. */
+/** Role of a page in the default 8-page deck. */
 export function slideKind(index: number): SlideKind {
-  if (index === 1) return "cover";
-  if (index === 2) return "empathy";
-  if (index === 7) return "pick";
-  if (index === 8) return "cta";
-  return "point";
+  return roleOf(DEFAULT_STRUCTURE, index) ?? "point";
 }
 
 /** Share of a box a line may use, so the receiving app's own wrapping never kicks in on top of ours. */
 const LINE_FILL = 0.94;
 const fit = (text: string, width: number, px: number): string => wrapJapanese(text, (width * LINE_FILL) / px);
+
+/** Smallest a heading may shrink to (share of its size) to stay on one line. */
+const MIN_HEAD_SCALE = 0.7;
+
+/** The font size at which `text` fits one line of `width`, never below MIN_HEAD_SCALE of `px`. */
+function oneLinePx(text: string, width: number, px: number): number {
+  const units = textUnits(text.replace(/\n/g, ""));
+  if (units === 0) return px;
+  return Math.max(px * MIN_HEAD_SCALE, Math.min(px, (width * LINE_FILL) / units));
+}
 
 const CONTENT_X = 110;
 const CONTENT_W = 860;
@@ -98,14 +107,14 @@ function frame(spec: DesignSpec): LayoutEl[] {
   ];
 }
 
-function bar(spec: DesignSpec, index: number, handle: string): LayoutEl[] {
+function bar(spec: DesignSpec, index: number, handle: string, pages: number): LayoutEl[] {
   const c = spec.theme;
   const els: LayoutEl[] = [
     { role: "bar", type: "shape", shape: "rect", box: box(0, 1200, SLIDE_WIDTH, 150), fill: c.bar },
-    { role: "handle", type: "text", box: box(60, 1200, 500, 150), text: handle, px: 38, weight: 700, color: c.onBar, align: "left" }
+    { role: "handle", type: "text", box: box(60, 1200, 440, 150), text: handle, px: 38, weight: 700, color: c.onBar, align: "left" }
   ];
-  const start = SLIDE_WIDTH - 60 - (8 * 34 + 7 * 18);
-  for (let i = 0; i < 8; i++) {
+  const start = SLIDE_WIDTH - 60 - (pages * 34 + (pages - 1) * 18);
+  for (let i = 0; i < pages; i++) {
     const active = i + 1 === index;
     els.push({
       role: active ? "pager-active" : "pager", type: "shape", shape: "ellipse", box: box(start + i * 52, 1258, 34, 34),
@@ -115,7 +124,7 @@ function bar(spec: DesignSpec, index: number, handle: string): LayoutEl[] {
   return els;
 }
 
-function content({ spec, index, fields: f, images }: LayoutInput): LayoutEl[] {
+function content({ spec, index, fields: f, images, structure = DEFAULT_STRUCTURE }: LayoutInput): LayoutEl[] {
   const { theme: c, type: t, layout: l } = spec;
   const get = (key: string) => f[`s${index}_${key}`] ?? "";
   const image = images?.[`s${index}_image`];
@@ -132,11 +141,11 @@ function content({ spec, index, fields: f, images }: LayoutInput): LayoutEl[] {
     text(b, value, px, weight, c.onAccent, "center", { fill: c.accent, radius: Math.floor(b.h / 2), wrap: false });
   const picture = (b: Box) => image && els.push({ type: "image", box: b, src: image, radius: Math.max(0, l.radius - 8) });
   const head = (b: Box, value: string, px: number, color: string, align: Align) =>
-    text(b, value, px * t.headScale, t.headWeight, color, align, { underline: t.underlineHeads });
+    text(b, value, oneLinePx(value, b.w, px * t.headScale), t.headWeight, color, align, { underline: t.underlineHeads });
   const body = (b: Box, px: number, align: Align = l.bodyAlign, valign?: "top" | "middle") =>
     text(b, get("body"), px * t.bodyScale, t.bodyWeight, c.ink, align, { valign });
 
-  switch (slideKind(index)) {
+  switch (roleOf(structure, index) ?? "point") {
     case "cover": {
       if (image) {
         picture(box(CONTENT_X, 110, CONTENT_W, 500));
@@ -178,10 +187,10 @@ function content({ spec, index, fields: f, images }: LayoutInput): LayoutEl[] {
       if (image) {
         picture(box(CONTENT_X, 130, CONTENT_W, 380));
         head(box(CONTENT_X, 540, CONTENT_W, 220), get("head"), 100, c.primary, l.headAlign);
-        pill(box(190, 800, 700, 150), f.s8_cta ?? "", 88 * t.headScale, t.headWeight);
+        pill(box(190, 800, 700, 150), get("cta"), 88 * t.headScale, t.headWeight);
       } else {
         head(box(CONTENT_X, 380, CONTENT_W, 300), get("head"), 110, c.primary, l.headAlign);
-        pill(box(190, 720, 700, 170), f.s8_cta ?? "", 88 * t.headScale, t.headWeight);
+        pill(box(190, 720, 700, 170), get("cta"), 88 * t.headScale, t.headWeight);
       }
       break;
     }
@@ -224,5 +233,6 @@ function content({ spec, index, fields: f, images }: LayoutInput): LayoutEl[] {
 
 /** All elements of one slide in paint order (decoration, frame, content, bottom bar). */
 export function layoutSlide(input: LayoutInput): LayoutEl[] {
-  return [...decor(input.spec), ...frame(input.spec), ...content(input), ...bar(input.spec, input.index, input.handle)];
+  const pages = (input.structure ?? DEFAULT_STRUCTURE).length;
+  return [...decor(input.spec), ...frame(input.spec), ...content(input), ...bar(input.spec, input.index, input.handle, pages)];
 }

@@ -13,7 +13,7 @@ import { totalCost } from "@ama/shared";
 import type { MockPost } from "../../lib/mock-data";
 import { STAGE_LABEL, stageOf } from "../../lib/post-stage";
 import { formatWaiting } from "../../lib/schedule";
-import { SLIDES, limitOf, slideHeadline, type SlideFieldKey } from "../../lib/slides";
+import { limitOf, slideDefs, slideHeadline, type SlideFieldKey } from "../../lib/slides";
 
 type EditorTab = "slides" | "caption" | "history";
 
@@ -53,6 +53,7 @@ function EditorBody({ post }: { post: MockPost }) {
   const stage = stageOf(post);
   const editable = post.rawStatus === undefined || post.rawStatus === "draft";
   const generating = post.generationStatus ? post.generationStatus in GENERATING_SET : false;
+  const SLIDES = slideDefs(post.structure);
   const slideDef = SLIDES[active] ?? SLIDES[0]!;
   const dirtySlides = !sameSlides(fields, serverSlides);
   const dirtyCaption = caption !== post.caption;
@@ -116,7 +117,7 @@ function EditorBody({ post }: { post: MockPost }) {
   };
 
   const previewUrl = post.assetUrls?.[active];
-  const headline = slideHeadline(fields, active);
+  const headline = slideHeadline(fields, active, post.structure);
 
   return (
     <>
@@ -236,7 +237,7 @@ function EditorBody({ post }: { post: MockPost }) {
             <div className="counters small muted">
               {slideDef.fields.map((f) => (
                 <span key={f.key}>
-                  {f.label} {fields?.[f.key]?.length ?? 0}/{limitOf(f.key)}字
+                  {f.label} {fields?.[f.key]?.length ?? 0}/{limitOf(f.key, post.structure)}字
                 </span>
               ))}
               <span className="ok-text strong">合計 {totalChars}字</span>
@@ -308,13 +309,13 @@ function EditorBody({ post }: { post: MockPost }) {
                       <span className="label">
                         {f.label}
                         <span className="muted small">
-                          {fields[f.key]?.length ?? 0}/{limitOf(f.key)}
+                          {fields[f.key]?.length ?? 0}/{limitOf(f.key, post.structure)}
                         </span>
                       </span>
                       <input
                         className="input"
                         value={fields[f.key] ?? ""}
-                        maxLength={limitOf(f.key)}
+                        maxLength={limitOf(f.key, post.structure)}
                         disabled={!editable}
                         onChange={(e) => updateField(f.key, e.target.value)}
                       />

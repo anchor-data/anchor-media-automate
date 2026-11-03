@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { validateImageUpload } from "@ama/integrations";
-import { IMAGE_ASSET_KINDS, SLIDE_IMAGE_SLOTS } from "@ama/shared";
+import { IMAGE_ASSET_KINDS } from "@ama/shared";
 import { z } from "zod";
 import { createRepo, type Bindings } from "../lib/env";
 import { imageAssetKey } from "../lib/image-assets";

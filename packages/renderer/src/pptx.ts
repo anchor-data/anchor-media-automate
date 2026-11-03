@@ -1,3 +1,4 @@
+import { DEFAULT_STRUCTURE, type SlideRole } from "@ama/shared";
 import PptxGenJS from "pptxgenjs";
 import { layoutSlide, SLIDE_HEIGHT, SLIDE_WIDTH, type Box, type LayoutEl, type SlideFieldsLike } from "./layout";
 import { fitContain, readImageSize } from "./image-size";
@@ -24,6 +25,8 @@ export interface DeckPptxInput {
   handle: string;
   /** Image data URLs by slot (`s3_image`). */
   images?: Readonly<Record<string, string>>;
+  /** Pages of the deck (the account's structure). Default: the 8-page deck. */
+  structure?: readonly SlideRole[];
 }
 
 type Slide = ReturnType<PptxGenJS["addSlide"]>;
@@ -62,14 +65,14 @@ function draw(pptx: PptxGenJS, slide: Slide, spec: DesignSpec, el: LayoutEl): vo
  * All 8 slides as a PPTX whose elements (text boxes, rounded shapes, circles, images) stay separate,
  * so the file imports into Canva as a design a human can edit element by element.
  */
-export async function renderDeckPptx({ spec, fields, handle, images }: DeckPptxInput): Promise<Uint8Array> {
+export async function renderDeckPptx({ spec, fields, handle, images, structure = DEFAULT_STRUCTURE }: DeckPptxInput): Promise<Uint8Array> {
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: "IG_4_5", width: pxToInches(SLIDE_WIDTH), height: pxToInches(SLIDE_HEIGHT) });
   pptx.layout = "IG_4_5";
-  for (let index = 1; index <= 8; index++) {
+  for (let index = 1; index <= structure.length; index++) {
     const slide = pptx.addSlide();
     slide.background = { color: hex(spec.theme.bg) };
-    for (const el of layoutSlide({ spec, index, fields, handle, images })) draw(pptx, slide, spec, el);
+    for (const el of layoutSlide({ spec, index, fields, handle, images, structure })) draw(pptx, slide, spec, el);
   }
   return (await pptx.write({ outputType: "uint8array" })) as Uint8Array;
 }

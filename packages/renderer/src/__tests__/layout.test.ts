@@ -106,3 +106,62 @@ describe("text placement", () => {
     expect(texts(layout(DEFAULT_DESIGN_SPEC, 3)).find((t) => t.text.includes("得意"))!.valign ?? "middle").toBe("middle");
   });
 });
+
+import { DEFAULT_STRUCTURE, type SlideRole } from "@ama/shared";
+
+describe("variable structures", () => {
+  const short: SlideRole[] = ["cover", "point", "point", "cta"];
+  const shortFields = { s1_title: "タイトル", s1_sub: "サブ", s2_num: "1", s2_head: "一つ目", s2_body: "本文一", s3_num: "2", s3_head: "二つ目", s3_body: "本文二", s4_head: "保存して", s4_cta: "フォロー" };
+  const at = (index: number, structure: SlideRole[] = short) => layoutSlide({ spec: DEFAULT_DESIGN_SPEC, index, fields: shortFields, handle: "@a", structure });
+
+  it("uses the role of the page in the given structure", () => {
+    expect(texts(at(2)).map((t) => t.text)).toContain("一つ目");
+    expect(texts(at(4)).map((t) => t.text)).toContain("フォロー");
+    expect(texts(at(1)).map((t) => t.text)).toContain("タイトル");
+  });
+
+  it("draws one pager dot per page and marks the current one", () => {
+    expect(at(2).filter((el) => el.role === "pager" || el.role === "pager-active")).toHaveLength(4);
+    expect(at(2).filter((el) => el.role === "pager-active")).toHaveLength(1);
+    expect(layoutSlide({ spec: DEFAULT_SPEC(), index: 1, fields, handle: "@a" }).filter((el) => el.role === "pager" || el.role === "pager-active")).toHaveLength(DEFAULT_STRUCTURE.length);
+  });
+
+  it("keeps the handle clear of the pager at every length", () => {
+    for (const n of [3, 5, 10]) {
+      const structure: SlideRole[] = ["cover", ...Array<SlideRole>(n - 2).fill("point"), "cta"];
+      const els = layoutSlide({ spec: DEFAULT_DESIGN_SPEC, index: 1, fields: {}, handle: "@a", structure });
+      const handle = els.find((el) => el.role === "handle")!;
+      const firstDot = Math.min(...els.filter((el) => el.role === "pager" || el.role === "pager-active").map((el) => (el.type === "shape" ? el.box.x : 9999)));
+      if (handle.type === "text") expect(handle.box.x + handle.box.w).toBeLessThanOrEqual(firstDot);
+    }
+  });
+});
+
+function DEFAULT_SPEC() {
+  return DEFAULT_DESIGN_SPEC;
+}
+
+describe("short headings stay on one line", () => {
+  const long = { ...fields, s8_head: "保存して見返そう", s5_head: "求人を比べる" };
+  const headOf = (els: LayoutEl[], text: string) => texts(els).find((t) => t.text.replace(/\n/g, "") === text)!;
+
+  it("shrinks a heading that is too wide instead of breaking it mid-phrase", () => {
+    const els = layoutSlide({ spec: DEFAULT_DESIGN_SPEC, index: 8, fields: long, handle: "@a" });
+    const head = headOf(els, "保存して見返そう");
+    expect(head.text).not.toContain("\n");
+    expect(head.px).toBeLessThan(110);
+    // 8 characters must fit the 860px box
+    expect(head.px * 8).toBeLessThanOrEqual(860);
+  });
+
+  it("leaves a heading that already fits at its normal size", () => {
+    const head = headOf(layoutSlide({ spec: DEFAULT_DESIGN_SPEC, index: 5, fields: long, handle: "@a" }), "求人を比べる");
+    expect(head.px).toBe(110);
+  });
+
+  it("never shrinks below 70% of the size, and wraps only then", () => {
+    const veryLong = { ...long, s8_head: "保存して見返そうねえええええ" };
+    const head = headOf(layoutSlide({ spec: DEFAULT_DESIGN_SPEC, index: 8, fields: veryLong, handle: "@a" }), "保存して見返そうねえええええ");
+    expect(head.px).toBeGreaterThanOrEqual(110 * 0.7 - 1);
+  });
+});

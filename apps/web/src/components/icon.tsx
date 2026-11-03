@@ -19,6 +19,7 @@ export type IconName =
   | "paperclip"
   | "chevron-right"
   | "chevron-down"
+  | "chevron-up"
   | "check"
   | "eye"
   | "bookmark"
@@ -116,6 +117,7 @@ const PATHS: Record<IconName, ReactNode> = {
   paperclip: <path d="M21.4 11.1l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5" />,
   "chevron-right": <path d="M9 18l6-6-6-6" />,
   "chevron-down": <path d="M6 9l6 6 6-6" />,
+  "chevron-up": <path d="M6 15l6-6 6 6" />,
   check: <path d="M20 6L9 17l-5-5" />,
   eye: (
     <>

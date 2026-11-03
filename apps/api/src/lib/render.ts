@@ -1,11 +1,9 @@
 import type { Repository } from "@ama/db";
 import { bytesToDataUrl, type CanvaClient } from "@ama/integrations";
 import { PPTX_MIME, renderDeckPptx, resolvePostDesign } from "@ama/renderer";
-import { deckExtrasFrom, slideFieldsSchema, slidesJsonWith } from "@ama/shared";
+import { DEFAULT_STRUCTURE, deckExtrasFrom, parseDeckSlides, slidesJsonWith } from "@ama/shared";
 import type { Post, SlideImage } from "@ama/shared";
 import { imageAssetKey } from "./image-assets";
-
-export const EXPECTED_PAGE_COUNT = 8;
 
 /**
  * Image bytes for the images chosen on a post, as data URLs by slot. An image whose file is gone from
@@ -53,24 +51,25 @@ export async function renderPost(
     const account = await repo.getAccount(post.accountId);
     if (!account) throw new Error(`Account not found: ${post.accountId}`);
 
+    const slides = parseDeckSlides(post.slidesJson);
     let designId = storedDesignId;
     if (!options.reexport || !designId) {
-      const slides = slideFieldsSchema.safeParse(post.slidesJson);
-      if (!slides.success) throw new Error("Post has no valid slides to render");
+      if (!slides) throw new Error("Post has no valid slides to render");
       const extras = deckExtrasFrom(post.slidesJson);
       // Chosen once and stored, so later renders and text edits keep the same look.
       const design = resolvePostDesign(account.design?.spec, extras.design, post.id);
       if (!extras.design) {
-        await repo.updatePost(post.id, { slidesJson: slidesJsonWith(slides.data, { ...extras, design }) });
+        await repo.updatePost(post.id, { slidesJson: slidesJsonWith(slides.slides, { ...extras, design, structure: slides.structure }) });
       }
       const images = await loadImageData(repo, options.imageBucket, extras.images);
-      const pptx = await renderDeckPptx({ spec: design, fields: slides.data, handle: account.instagramHandle, images });
+      const pptx = await renderDeckPptx({ spec: design, fields: slides.slides, handle: account.instagramHandle, images, structure: slides.structure });
       ({ designId } = await canva.importFile({ title: post.title, bytes: pptx, mimeType: PPTX_MIME }));
     }
 
     const urls = await canva.exportPages(designId);
-    if (urls.length !== EXPECTED_PAGE_COUNT) {
-      throw new Error(`Canva export returned ${urls.length} pages, expected ${EXPECTED_PAGE_COUNT}`);
+    const expectedPages = slides?.structure.length ?? DEFAULT_STRUCTURE.length;
+    if (urls.length !== expectedPages) {
+      throw new Error(`Canva export returned ${urls.length} pages, expected ${expectedPages}`);
     }
     await repo.replacePostAssets(
       post.id,

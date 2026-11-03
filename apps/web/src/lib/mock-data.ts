@@ -1,4 +1,4 @@
-import { AUTO_RUN_SCHEDULES, type GenerationStatus, type PostCost, type PostStatus as ApiPostStatus, type SlideFields } from "@ama/shared";
+import { AUTO_RUN_SCHEDULES, type GenerationStatus, type PostCost, type PostStatus as ApiPostStatus, type SlideFields, type SlideRole } from "@ama/shared";
 
 export type PostStatus = "draft" | "scheduled" | "published";
 
@@ -27,6 +27,8 @@ export interface MockPost {
   readonly canvaDesignId?: string;
   /** Slide copy the agent produced; undefined for offline drafts. */
   readonly slides?: SlideFields;
+  /** Pages of this post's deck; undefined = the default 8 pages. */
+  readonly structure?: readonly SlideRole[];
   /** Measured generation cost (USD) by step; all zero when nothing was measured. */
   readonly costUsd?: PostCost;
 }
@@ -43,7 +45,8 @@ export interface MockAccount {
   readonly systemPrompt: string;
   readonly memory: readonly string[];
   readonly ideaQueue: readonly string[];
-  /** Canva brand template this account renders with (API accounts only). */
+  /** Page structure of this account's posts (API accounts only); undefined = the default 8 pages. */
+  readonly structure?: readonly SlideRole[];
 }
 
 export interface IdeaCandidate {

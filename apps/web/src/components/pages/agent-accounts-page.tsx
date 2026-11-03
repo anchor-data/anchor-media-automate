@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { AUTO_RUN_SCHEDULES } from "@ama/shared";
+import { AccountDesignCard } from "../design/account-design-card";
 import { AgentProfileForm } from "../agent-profile-form";
 import { Icon } from "../icon";
 import { PageTopbar, Switch, Tabs } from "../ui/page";
@@ -14,7 +15,7 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-const STEPS = ["Facebookページで認証", "Instagramプロアカウントを選ぶ", "ガイドラインとテンプレートを設定"] as const;
+const STEPS = ["Facebookページで認証", "Instagramプロアカウントを選ぶ", "ガイドラインとデザインを設定"] as const;
 
 export function AgentAccountsPage() {
   const {
@@ -165,6 +166,7 @@ export function AgentAccountsPage() {
                       </select>
                       {!apiReady ? <p className="muted small">API未接続のため定期実行は利用できません</p> : null}
                     </div>
+                    <AccountDesignCard accountId={active.id} />
                     <div className="stack gap-8">
                       <div className="row between">
                         <strong>メモリー(重複防止)</strong>

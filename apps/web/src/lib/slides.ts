@@ -1,6 +1,6 @@
-import { SLIDE_FIELD_LIMITS, type SlideFields } from "@ama/shared";
+import { DEFAULT_STRUCTURE, fieldKeys, type SlideFields, type SlideRole } from "@ama/shared";
 
-export type SlideFieldKey = keyof SlideFields;
+export type SlideFieldKey = string;
 
 export interface SlideFieldDef {
   readonly key: SlideFieldKey;
@@ -13,50 +13,51 @@ export interface SlideDef {
   readonly fields: readonly SlideFieldDef[];
 }
 
-const numHeadBody = (n: number): readonly SlideFieldDef[] => [
-  { key: `s${n}_num` as SlideFieldKey, label: "番号" },
-  { key: `s${n}_head` as SlideFieldKey, label: "見出し" },
-  { key: `s${n}_body` as SlideFieldKey, label: "本文" }
-];
+export const ROLE_LABEL: Record<SlideRole, string> = {
+  cover: "フック",
+  empathy: "課題",
+  point: "要点",
+  pick: "求人 / まとめ",
+  cta: "CTA"
+};
 
-/** The 8 pages of the carousel and the Canva autofill fields each one carries. */
-export const SLIDES: readonly SlideDef[] = [
-  { index: 1, role: "フック", fields: [{ key: "s1_title", label: "見出し" }, { key: "s1_sub", label: "サブ" }] },
-  { index: 2, role: "課題", fields: [{ key: "s2_head", label: "見出し" }, { key: "s2_body", label: "本文" }] },
-  { index: 3, role: "要点1", fields: numHeadBody(3) },
-  { index: 4, role: "要点2", fields: numHeadBody(4) },
-  { index: 5, role: "要点3", fields: numHeadBody(5) },
-  { index: 6, role: "要点4", fields: numHeadBody(6) },
-  {
-    index: 7,
-    role: "求人 / まとめ",
-    fields: [
-      { key: "s7_label", label: "ラベル" },
-      { key: "s7_head", label: "見出し" },
-      { key: "s7_body", label: "本文" }
-    ]
-  },
-  { index: 8, role: "CTA", fields: [{ key: "s8_head", label: "見出し" }, { key: "s8_cta", label: "ボタン文言" }] }
-];
+const FIELD_LABEL: Record<string, string> = {
+  title: "見出し",
+  sub: "サブ",
+  head: "見出し",
+  body: "本文",
+  num: "番号",
+  label: "ラベル",
+  cta: "ボタン文言"
+};
 
-export function limitOf(key: SlideFieldKey): number {
-  return SLIDE_FIELD_LIMITS[key];
+/** The pages of a carousel for a structure, with the text fields each one carries. */
+export function slideDefs(structure: readonly SlideRole[] = DEFAULT_STRUCTURE): readonly SlideDef[] {
+  const keys = fieldKeys(structure);
+  const total = structure.filter((role) => role === "point").length;
+  let point = 0;
+  return structure.map((role, i) => {
+    const label = role === "point" ? (point += 1, total > 1 ? `要点${point}` : "要点") : ROLE_LABEL[role];
+    return {
+      index: i + 1,
+      role: label,
+      fields: keys.filter((f) => f.page === i + 1).map((f) => ({ key: f.key, label: FIELD_LABEL[f.name] ?? f.name }))
+    };
+  });
+}
+
+/** The default 8-page deck. */
+export const SLIDES: readonly SlideDef[] = slideDefs();
+
+export function limitOf(key: SlideFieldKey, structure: readonly SlideRole[] = DEFAULT_STRUCTURE): number {
+  return fieldKeys(structure).find((f) => f.key === key)?.max ?? 0;
 }
 
 /** Headline shown on a slide tile: the first non-empty text field. */
-export function slideHeadline(slides: SlideFields | undefined, index: number): string {
+export function slideHeadline(slides: SlideFields | undefined, index: number, structure: readonly SlideRole[] = DEFAULT_STRUCTURE): string {
   if (!slides) return "";
-  const def = SLIDES[index];
+  const def = slideDefs(structure)[index];
   if (!def) return "";
   const field = def.fields.find((f) => f.key.endsWith("_title") || f.key.endsWith("_head")) ?? def.fields[0];
   return field ? (slides[field.key] ?? "") : "";
 }
-
-/** Every autofill field with its character limit, for the template field table. */
-export const AUTOFILL_FIELDS: readonly { key: SlideFieldKey; label: string; limit: number }[] = SLIDES.flatMap((slide) =>
-  slide.fields.map((field) => ({
-    key: field.key,
-    label: `${slide.index}枚目 ${slide.role} · ${field.label}`,
-    limit: limitOf(field.key)
-  }))
-);

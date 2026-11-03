@@ -120,3 +120,16 @@ describe("images in the pptx", () => {
     expect(new Set([a, b, c]).size).toBe(3);
   });
 });
+
+describe("variable structures in the pptx", () => {
+  const structure = ["cover", "point", "point", "cta"] as const;
+  const shortFields = { s1_title: "タイトル", s1_sub: "サブ", s2_num: "1", s2_head: "一つ目", s2_body: "本文一", s3_num: "2", s3_head: "二つ目", s3_body: "本文二", s4_head: "保存して", s4_cta: "フォロー" };
+
+  it("has one slide per page of the structure", async () => {
+    const bytes = await renderDeckPptx({ spec: DEFAULT_DESIGN_SPEC, fields: shortFields, handle: "@a", structure: [...structure] });
+    const zip = await JSZip.loadAsync(bytes);
+    const slides = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name));
+    expect(slides).toHaveLength(4);
+    expect(await slideXml(zip, 4)).toContain("フォロー");
+  });
+});

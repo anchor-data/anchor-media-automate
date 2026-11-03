@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Guideline, Idea, Job } from "@ama/shared";
-import { slideFieldsSchema } from "@ama/shared";
+import { fieldKeys, slideFieldsSchema } from "@ama/shared";
 import { MockCreationAgent, buildCreationUserMessage, expectedPostType, validateDeck } from "../creation";
 
 const idea: Idea = {
@@ -243,5 +243,35 @@ describe("buildCreationUserMessage", () => {
   it("adds operator feedback and the previous deck when regenerating", () => {
     const message = buildCreationUserMessage(idea.id, { ...base, feedback: "もっと短く" });
     expect(message).toContain("もっと短く");
+  });
+});
+
+describe("variable deck structures", () => {
+  const short = ["cover", "point", "point", "cta"] as const;
+  const shortSlides = Object.fromEntries(fieldKeys([...short]).map((f) => [f.key, "あ"]));
+  const base = { postType: "knowhow", slides: shortSlides, caption: "c", hashtags: ["#a"] };
+
+  it("validates a deck against the structure given in the context", () => {
+    expect(validateDeck(base, { idea, guideline, structure: [...short] }).ok).toBe(true);
+    // the same deck is not an 8-page deck
+    expect(validateDeck(base, { idea, guideline }).ok).toBe(false);
+  });
+
+  it("reports a character limit of a page that only exists in this structure", () => {
+    const result = validateDeck({ ...base, slides: { ...shortSlides, s4_cta: "あ".repeat(9) } }, { idea, guideline, structure: [...short] });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.join()).toContain("s4_cta");
+  });
+
+  it("the mock agent builds exactly the structure's pages", async () => {
+    const output = await new MockCreationAgent().run({ ideaId: idea.id, accountId: idea.accountId, structure: [...short] }, tools());
+    expect(Object.keys(output.deck.slides).sort()).toEqual(fieldKeys([...short]).map((f) => f.key).sort());
+  });
+
+  it("tells the agent the page layout in the user message", () => {
+    const message = buildCreationUserMessage(idea.id, { ideaId: idea.id, accountId: idea.accountId, structure: [...short] });
+    expect(message).toContain("4-slide");
+    expect(message).toContain("s4_cta");
+    expect(message).not.toContain("s8_");
   });
 });

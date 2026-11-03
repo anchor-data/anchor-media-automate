@@ -1,3 +1,4 @@
+import { DEFAULT_STRUCTURE } from "@ama/shared";
 import { layoutSlide, SLIDE_HEIGHT, SLIDE_WIDTH, type Box, type LayoutEl, type LayoutInput } from "./layout";
 import type { DesignSpec } from "./spec";
 
@@ -53,7 +54,8 @@ export function renderSlideHtml(input: LayoutInput): string {
 
 /** All 8 slides in one document, one per printed page. */
 export function renderDeckHtml(input: Omit<LayoutInput, "index">): string {
-  const slides = Array.from({ length: 8 }, (_, i) => slideBlock({ ...input, index: i + 1 })).join("");
+  const pages = (input.structure ?? DEFAULT_STRUCTURE).length;
+  const slides = Array.from({ length: pages }, (_, i) => slideBlock({ ...input, index: i + 1 })).join("");
   const print = `
   @page { size: ${SLIDE_WIDTH}px ${SLIDE_HEIGHT}px; margin: 0; }
   html, body { height: auto; }

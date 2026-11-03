@@ -10,6 +10,19 @@ How a post gets its look, without anyone building Canva templates.
 4. **Per post.** Each new post gets the account design varied by its id (`varySpec`): accent color from the account's alternates, number alignment, and (when `variety` is `lively`) heading underline and decoration. `variety: none` keeps every post identical.
 5. **Regenerate.** In the editor, 「デザインを再生成」 takes a free-text prompt ("番号は左、見出しは下線なし、明るく"). The model returns a partial spec which is merged into the post's current design (the account guideline is part of the prompt). Without a prompt the account design is varied again. Text is never touched.
 
+## Slide structure (page count and roles)
+
+An account has a page structure: an ordered list of page roles (`cover`, `empathy`, `point`, `pick`, `cta`), 3-10 pages, cover first, CTA last, at least one point page. The default is the 8 pages every post used to have.
+
+- Set on the デザイン page (or in the onboarding step): infer it from the reference screenshots (`POST /accounts/:id/structure/analyze`, saved as a proposal) and adjust by hand (`PUT /accounts/:id/structure`, normalized to a valid structure).
+- It applies to new posts. A post stores the structure it was made with (`slides_json.structure`; posts without one are the default 8 pages), so editing, regenerating and re-rendering stay consistent after the account's structure changes.
+- Field keys stay `s{page}_{name}` (`s3_head`...), so the default structure has exactly the keys it always had. Character limits are per role (`ROLE_FIELDS` in `@ama/shared`).
+- The creation agent gets the page list and fills exactly those fields; the renderer, the Canva import and the editor all follow the structure.
+
+## Onboarding
+
+Adding an account is a stepper: アカウント → ターゲット・コンセプト (creates the account) → デザイン (references + guideline) → スライド構成 → スケジュール → 完了. Steps after the account is created can be skipped and finished later. Everything entered there is shown and editable afterwards: target/concept in エージェント > ペルソナ・ガイドライン, schedule and a design/structure summary in エージェント > エージェント設定, and the full design in デザイン.
+
 ## Where things live
 
 - `@ama/renderer`: `DesignSpec` + guardrails (`spec.ts`), variation (`vary.ts`), reference/prompt → spec (`design.ts`, `nl.ts`), Japanese line wrapping (`wrap.ts`), HTML preview (`html.ts`, used by the デザイン page) and PPTX output (`pptx.ts`, used for Canva).

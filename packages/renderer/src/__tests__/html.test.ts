@@ -94,3 +94,16 @@ describe("images in the html preview", () => {
     expect(render(DEFAULT_DESIGN_SPEC, 3)).not.toContain("<img");
   });
 });
+
+describe("variable structures in the html deck", () => {
+  it("renders one slide per page of the structure", () => {
+    const html = renderDeckHtml({
+      spec: DEFAULT_DESIGN_SPEC,
+      fields: { s1_title: "t", s1_sub: "s", s2_num: "1", s2_head: "h", s2_body: "b", s3_head: "保存", s3_cta: "フォロー" },
+      handle: "@a",
+      structure: ["cover", "point", "cta"]
+    });
+    expect((html.match(/class="slide"/g) ?? []).length).toBe(3);
+    expect((html.match(/data-role="pager-active"/g) ?? []).length).toBe(3);
+  });
+});

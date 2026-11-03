@@ -16,7 +16,7 @@ import {
   toIsoWithOffset,
   toLocalInputValue
 } from "../../lib/schedule";
-import { SLIDES, slideHeadline } from "../../lib/slides";
+import { slideDefs, slideHeadline } from "../../lib/slides";
 
 type ListTab = "mine" | "all";
 
@@ -134,16 +134,16 @@ export function ReviewPage() {
             <section className="pane grow pad-32 review-main">
               <h2 className="detail-title lg">{selected.title}</h2>
               <p className="muted small">
-                ノウハウ · {SLIDES.length}枚 · 生成 {formatShortDateTime(selected.createdAt)}
+                ノウハウ · {slideDefs(selected.structure).length}枚 · 生成 {formatShortDateTime(selected.createdAt)}
               </p>
               <div className="slide-grid">
-                {SLIDES.map((slide, i) => (
+                {slideDefs(selected.structure).map((slide, i) => (
                   <SlideTile
                     key={slide.index}
                     variant="card"
                     index={i}
                     url={selected.assetUrls?.[i]}
-                    headline={slideHeadline(selected.slides, i)}
+                    headline={slideHeadline(selected.slides, i, selected.structure)}
                   />
                 ))}
               </div>

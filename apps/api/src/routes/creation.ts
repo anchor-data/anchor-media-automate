@@ -7,7 +7,15 @@ import {
   type CreationToolContext
 } from "@ama/integrations";
 import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
-import { addCost, captionWithHashtags, deckExtrasFrom, slideFieldsSchema, slidesJsonWith } from "@ama/shared";
+import {
+  DEFAULT_STRUCTURE,
+  addCost,
+  captionWithHashtags,
+  deckExtrasFrom,
+  parseDeckSlides,
+  slideFieldsSchemaFor,
+  slidesJsonWith
+} from "@ama/shared";
 import { chatCostUsd } from "@ama/integrations";
 import { requestSpecPatch, resolvePostDesign } from "@ama/renderer";
 import { z } from "zod";
@@ -45,7 +53,9 @@ export async function generatePost(
     await repo.updatePost(postId, { generationStatus: "generating_copy", generationError: null });
     // A regenerated copy keeps the design the post already has.
     const stored = deckExtrasFrom((await repo.getPost(postId))?.post.slidesJson);
-    const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(input, toolContext(repo));
+    // A post keeps its own structure; a new one takes the account's.
+    const structure = stored.structure ?? (await repo.getAccount(input.accountId))?.design?.structure ?? DEFAULT_STRUCTURE;
+    const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run({ ...input, structure }, toolContext(repo));
     const generated = await generateDeckImages(
       repo,
       { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
@@ -68,7 +78,8 @@ export async function generatePost(
         images: generated.images,
         design: stored.design,
         designPrompt: stored.designPrompt,
-        costUsd
+        costUsd,
+        structure
       }),
       postType: output.deck.postType
     });
@@ -123,7 +134,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
     title: z.string().min(1).optional(),
     caption: z.string().max(2200).optional(),
     hashtags: z.array(z.string()).max(30).optional(),
-    slides: slideFieldsSchema.optional()
+    slides: z.record(z.string(), z.string()).optional()
   });
   const parsed = bodySchema.safeParse(await c.req.json());
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
@@ -134,19 +145,25 @@ creationRoutes.patch("/posts/:id", async (c) => {
   const { post } = detail;
   if (post.status !== "draft") return c.json({ error: `Only draft posts can be edited (is ${post.status})` }, 409);
 
-  const slides = parsed.data.slides ?? slideFieldsSchema.safeParse(post.slidesJson).data;
+  const current = parseDeckSlides(post.slidesJson);
+  const structure = current?.structure ?? deckExtrasFrom(post.slidesJson).structure ?? DEFAULT_STRUCTURE;
+  if (parsed.data.slides) {
+    const checked = slideFieldsSchemaFor(structure).safeParse(parsed.data.slides);
+    if (!checked.success) return c.json({ error: checked.error.flatten() }, 400);
+  }
+  const slides = parsed.data.slides ?? current?.slides;
   if (parsed.data.slides && post.ideaId && post.postType) {
     const idea = await repo.getIdea(post.ideaId);
     const guideline = idea ? await repo.getActiveGuideline(idea.accountId) : null;
     if (idea && guideline) {
-      const deck: SlideDeck = {
+      const deck = {
         postType: post.postType,
         slides: parsed.data.slides,
         images: deckExtrasFrom(post.slidesJson).images,
         caption: parsed.data.caption ?? post.caption,
         hashtags: parsed.data.hashtags ?? post.hashtags ?? []
       };
-      const check = validateDeck(deck, { idea, guideline });
+      const check = validateDeck(deck, { idea, guideline, structure });
       if (!check.ok) return c.json({ error: check.errors }, 422);
     }
   }
@@ -175,7 +192,7 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
   if (!post.ideaId) return c.json({ error: "Post has no source idea to regenerate from" }, 422);
   if (post.status !== "draft") return c.json({ error: `Only draft posts can be regenerated (is ${post.status})` }, 409);
 
-  const previous = slideFieldsSchema.safeParse(post.slidesJson);
+  const previous = parseDeckSlides(post.slidesJson);
   const extras = deckExtrasFrom(post.slidesJson);
   await repo.updatePost(post.id, { generationStatus: "pending", generationError: null });
   await runInBackground(
@@ -188,8 +205,8 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
         accountId: post.accountId,
         feedback: parsed.data.feedback,
         previousDeck:
-          previous.success && post.postType
-            ? { postType: post.postType, slides: previous.data, images: extras.images, caption: post.caption, hashtags: post.hashtags ?? [] }
+          previous && post.postType
+            ? ({ postType: post.postType, slides: previous.slides, images: extras.images, caption: post.caption, hashtags: post.hashtags ?? [] } as SlideDeck)
             : undefined
       },
       "regenerate"
@@ -212,8 +229,8 @@ creationRoutes.post("/posts/:id/design/regenerate", async (c) => {
   if (!detail) return c.json({ error: "Post not found" }, 404);
   const { post } = detail;
   if (post.status !== "draft") return c.json({ error: `Only draft posts can be redesigned (is ${post.status})` }, 409);
-  const slides = slideFieldsSchema.safeParse(post.slidesJson);
-  if (!slides.success) return c.json({ error: "Post has no slides to redesign yet" }, 409);
+  const slides = parseDeckSlides(post.slidesJson);
+  if (!slides) return c.json({ error: "Post has no slides to redesign yet" }, 409);
   const account = await repo.getAccount(post.accountId);
   if (!account) return c.json({ error: "Account not found" }, 404);
 
@@ -241,7 +258,7 @@ creationRoutes.post("/posts/:id/design/regenerate", async (c) => {
   const updated = await repo.updatePost(post.id, {
     generationStatus: "pending",
     generationError: null,
-    slidesJson: slidesJsonWith(slides.data, { ...extras, design, designPrompt: prompt, costUsd })
+    slidesJson: slidesJsonWith(slides.slides, { ...extras, design, designPrompt: prompt, costUsd })
   });
   if (!updated) return c.json({ error: "Post not found" }, 404);
   await runInBackground(c, renderPost(repo, createCanva(c.env, repo), updated, { imageBucket: c.env.IMAGE_ASSETS }).catch(() => undefined));

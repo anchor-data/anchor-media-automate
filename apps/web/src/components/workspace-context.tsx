@@ -14,7 +14,7 @@ import {
   autoRunSettingsSchema,
   captionWithHashtags,
   deckExtrasFrom,
-  slideFieldsSchema,
+  parseDeckSlides,
   type Guideline,
   type GuidelineUpsert,
   type Idea,
@@ -22,7 +22,8 @@ import {
   type Post,
   type PostAsset,
   type Reference,
-  type SlideFields
+  type SlideFields,
+  type SlideRole
 } from "@ama/shared";
 import {
   approvePost as approvePostApi,
@@ -96,13 +97,15 @@ interface WorkspaceValue {
     target: string,
     concept: string,
     title?: string
-  ) => Promise<void>;
+  ) => Promise<string>;
   /** Turns scheduled idea+content generation on or off for an account. */
   saveAutoRun: (accountId: string, enabled: boolean, schedule: string) => Promise<void>;
   /** Persists a caption edit (hashtags included in the text) to the API; local-only when offline. */
   savePostCaption: (id: string, caption: string) => Promise<void>;
   /** Persists edited slide copy, then re-renders the Canva images. */
   savePostSlides: (id: string, slides: SlideFields) => Promise<void>;
+  /** Remembers an account's page structure after it was saved on the server. */
+  setAccountStructure: (accountId: string, structure: readonly SlideRole[]) => void;
   /** Approves and schedules a draft. Resolves true on success. */
   approvePost: (id: string, scheduledIso?: string) => Promise<boolean>;
   /** Re-export the stored Canva design (preview URLs expire). */
@@ -148,7 +151,8 @@ function mapAccount(
     autoRunEnabled: fallback?.autoRunEnabled ?? false,
     systemPrompt: guideline?.systemPrompt || fallback?.systemPrompt || DEFAULT_PROMPT,
     memory: memory.map((m) => m.topicKey),
-    ideaQueue: ideas.filter((i) => i.status === "queued").map((i) => i.title)
+    ideaQueue: ideas.filter((i) => i.status === "queued").map((i) => i.title),
+    structure: fallback?.structure
   };
 }
 
@@ -181,7 +185,7 @@ function errorText(error: unknown): string {
 }
 
 function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[]): MockPost {
-  const slides = slideFieldsSchema.safeParse(post.slidesJson);
+  const deck = parseDeckSlides(post.slidesJson);
   const dateIso = post.scheduledAt ?? post.createdAt;
   return {
     id: post.id,
@@ -207,7 +211,8 @@ function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[
     generationError: post.generationError ?? null,
     assetUrls: assets ? assetUrlsOf(assets) : undefined,
     canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined,
-    slides: slides.success ? slides.data : undefined,
+    slides: deck?.slides,
+    structure: deck?.structure,
     costUsd: deckExtrasFrom(post.slidesJson).costUsd
   };
 }
@@ -299,7 +304,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                   INITIAL_ACCOUNTS.find((a) => a.id === acc.id)
                 ),
                 schedule: acc.autoRunSchedule ?? DEFAULT_AUTO_RUN_SCHEDULE,
-                autoRunEnabled: acc.autoRunEnabled ?? false
+                autoRunEnabled: acc.autoRunEnabled ?? false,
+                structure: acc.design?.structure
               }))
             : INITIAL_ACCOUNTS;
 
@@ -447,7 +453,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setActiveAccountId(id);
         setSelectedPostId(null);
         setSelectedIdeaId(null);
+        return id;
       },
+      setAccountStructure: (accountId, structure) =>
+        setAccounts((prev) => prev.map((a) => (a.id === accountId ? { ...a, structure } : a))),
       saveAutoRun: async (accountId, enabled, schedule) => {
         const settings = autoRunSettingsSchema.parse({ enabled, schedule });
         if (apiReady) await putAutoRun(accountId, settings);
