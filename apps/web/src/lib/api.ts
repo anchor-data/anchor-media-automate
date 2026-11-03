@@ -1,6 +1,7 @@
 import type {
   Account,
   AutoRunSettings,
+  DesignRules,
   Guideline,
   GuidelineUpsert,
   Idea,
@@ -9,6 +10,7 @@ import type {
   MemoryItem,
   Post,
   PostAsset,
+  PostCustomization,
   Reference,
   ReferenceCreate,
   SlideFields
@@ -220,14 +222,28 @@ export async function getPostDetail(postId: string) {
 }
 
 /** Starts agent + Canva render in the background; poll getPostDetail until generationStatus is ready/failed. */
-export async function createContent(ideaId: string) {
-  return request<{ item: Post }>(`/ideas/${ideaId}/create`, { method: "POST" });
+export async function createContent(ideaId: string, customization?: PostCustomization) {
+  return request<{ item: Post }>(`/ideas/${ideaId}/create`, {
+    method: "POST",
+    body: JSON.stringify({ customization })
+  });
 }
 
-export async function regeneratePost(postId: string, feedback?: string) {
+export async function regeneratePost(postId: string, feedback?: string, customization?: PostCustomization) {
   return request<{ item: Post }>(`/posts/${postId}/regenerate`, {
     method: "POST",
-    body: JSON.stringify({ feedback })
+    body: JSON.stringify({ feedback, customization })
+  });
+}
+
+export async function getDesignRules(accountId: string) {
+  return request<{ rules: DesignRules }>(`/accounts/${accountId}/design-rules`);
+}
+
+export async function saveDesignRules(accountId: string, rules: DesignRules) {
+  return request<{ rules: DesignRules }>(`/accounts/${accountId}/design-rules`, {
+    method: "PUT",
+    body: JSON.stringify(rules)
   });
 }
 

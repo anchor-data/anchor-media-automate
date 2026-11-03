@@ -22,6 +22,7 @@ export {
 import { NotConfiguredError } from "./errors";
 export { estimateOpenAiImageCost, logOpenAiImageBatchCost, logOpenAiImageCost } from "./openai-cost";
 export {
+  composeBackgroundPrompt,
   composeImagePrompt,
   generateSlideImage,
   type GenerateSlideImageInput,

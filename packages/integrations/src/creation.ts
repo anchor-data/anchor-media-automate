@@ -1,7 +1,29 @@
 import { Agent, run, setDefaultOpenAIKey, tool } from "@openai/agents";
 import { z } from "zod";
-import { SLIDE_FIELD_LIMITS, slideDeckSchema, slideFieldsSchema } from "@ama/shared";
-import type { Guideline, Idea, ImageAsset, Job, PostType, Reference, SlideDeck, SlideFields } from "@ama/shared";
+import {
+  DEFAULT_DESIGN_RULES,
+  EMPTY_CUSTOMIZATION,
+  SLIDE_FIELD_LIMITS,
+  buildGenerationConfig,
+  checkCustomization,
+  isCustomizationEmpty,
+  sameBackground,
+  slideDeckSchema,
+  slideFieldsSchema
+} from "@ama/shared";
+import type {
+  DesignRules,
+  Guideline,
+  Idea,
+  ImageAsset,
+  Job,
+  BackgroundPlan,
+  PostCustomization,
+  PostType,
+  Reference,
+  SlideDeck,
+  SlideFields
+} from "@ama/shared";
 import { NotConfiguredError } from "./errors";
 import { logOpenAiRunCost } from "./openai-cost";
 
@@ -22,6 +44,15 @@ export type CreationRunInput = {
   /** Operator feedback when regenerating an existing deck. */
   feedback?: string;
   previousDeck?: SlideDeck;
+  /** Per-post instructions entered before generation. */
+  customization?: PostCustomization;
+  /** Account-wide design rules. */
+  designRules?: DesignRules;
+  /**
+   * Present when the account's template has background slots: the agent must then pick a palette
+   * and motif for this post, different from the `recent` posts so the feed does not look uniform.
+   */
+  background?: { recent: BackgroundPlan[] };
 };
 
 export type CreationRunOutput = {
@@ -42,6 +73,12 @@ export type DeckContext = {
   imageAssets?: readonly ImageAsset[];
   /** True when the account has a style prompt, so imagePrompts may be used. */
   imageGeneration?: boolean;
+  /** Per-post instructions the deck must honor. */
+  customization?: PostCustomization;
+  /** True when the template exposes background slots, so `background` may be set. */
+  backgroundEnabled?: boolean;
+  /** Backgrounds of the account's latest posts; an identical palette+motif is rejected. */
+  recentBackgrounds?: readonly BackgroundPlan[];
 };
 
 export type DeckValidation =
@@ -101,6 +138,22 @@ export function validateDeck(raw: unknown, context: DeckContext): DeckValidation
   }
   for (const rule of findNgPhraseViolations(deck, context.guideline.ngRules)) {
     errors.push(`Deck contains an NG phrase: ${rule}`);
+  }
+  if (deck.background) {
+    const background = deck.background;
+    if (!context.backgroundEnabled) {
+      errors.push("background: the template has no background slots; omit background");
+    } else if ((context.recentBackgrounds ?? []).some((recent) => sameBackground(recent, background))) {
+      errors.push("background: same palette and motif as a recent post; choose a different palette or motif");
+    }
+  }
+  if (context.customization) {
+    if (context.customization.graph.enabled && !context.imageGeneration) {
+      errors.push("グラフの指定がありますが、このアカウントには画像スタイルのプロンプトがなくAI画像を生成できません");
+    }
+    for (const check of checkCustomization(deck, context.customization)) {
+      if (!check.ok) errors.push(`カスタマイズ指示が未反映: ${check.label}`);
+    }
   }
   return errors.length > 0 ? { ok: false, errors } : { ok: true, deck };
 }
@@ -186,12 +239,44 @@ const submitDeckSchema = z.object({
   hashtags: z.array(z.string()),
   /** Images from list_image_assets placed into slides; empty when none fit. */
   images: z.array(z.object({ slot: z.string(), assetId: z.string() })),
+  /** Palette + motif for the generated background image; null when backgrounds are not offered. */
+  background: z.object({ palette: z.string(), motif: z.string() }).nullable(),
   /** Scene-only prompts for AI-generated slide illustrations; [] when generation is not offered. */
   imagePrompts: z.array(z.object({ slot: z.string(), scene: z.string() }))
 });
 
 const getIdeaArgsSchema = z.object({ confirm: z.boolean().nullable() });
 const getJobArgsSchema = z.object({ jobId: z.string() });
+
+/** The user turn for the creation agent: idea, structured generation config, and regenerate context. */
+export function buildCreationUserMessage(ideaId: string, input: CreationRunInput): string {
+  const customized = input.customization && !isCustomizationEmpty(input.customization);
+  const config =
+    input.designRules || customized
+      ? buildGenerationConfig(input.designRules ?? DEFAULT_DESIGN_RULES, input.customization ?? EMPTY_CUSTOMIZATION)
+      : null;
+  return [
+    `ideaId: ${ideaId}`,
+    "Build the 8-slide deck for this idea, then call submit_deck.",
+    config
+      ? `generationConfig (structured; "global" are account-wide design rules that always apply, "post" are this post's instructions, "requirements" are per-page musts):\n${JSON.stringify(config)}`
+      : null,
+    input.background
+      ? `background: pick a palette and motif for this post's background image (submit_deck.background). It must look clearly different from these recent posts' backgrounds (change the palette first, then the motif):\n${JSON.stringify(input.background.recent)}${
+          input.designRules?.colorPatterns.length
+            ? `\nPrefer a palette from generationConfig.global.colorPatterns; you may refine its wording.`
+            : ""
+        }`
+      : null,
+    customized && input.customization?.variationSeed
+      ? `variationSeed: ${input.customization.variationSeed} — use it to choose a different angle, layout emphasis and phrasing than a default run would.`
+      : null,
+    input.feedback ? `Operator feedback to apply:\n${input.feedback}` : null,
+    input.previousDeck ? `Previous deck (improve, do not repeat verbatim):\n${JSON.stringify(input.previousDeck)}` : null
+  ]
+    .filter((part): part is string => part !== null)
+    .join("\n\n");
+}
 
 /** OpenAI Agents SDK creation — tools are Backend-owned; the deck is only accepted via submit_deck. */
 export class OpenAICreationAgent implements CreationAgent {
@@ -262,9 +347,18 @@ export class OpenAICreationAgent implements CreationAgent {
             caption: payload.caption,
             hashtags: payload.hashtags,
             images: payload.images,
-            imagePrompts: payload.imagePrompts
+            imagePrompts: payload.imagePrompts,
+            ...(payload.background ? { background: payload.background } : {})
           },
-          { idea, guideline, imageAssets, imageGeneration }
+          {
+            idea,
+            guideline,
+            imageAssets,
+            imageGeneration,
+            customization: input.customization,
+            backgroundEnabled: Boolean(input.background),
+            recentBackgrounds: input.background?.recent
+          }
         );
         if (!result.ok) {
           state.rejections += 1;
@@ -299,6 +393,8 @@ Required workflow:
    AI illustrations are available: the account has fixed image rules (subject, style, palette, background), applied automatically. For slides where a custom illustration helps (typically the explanation slides 2-6, at most 5), add submit_deck.imagePrompts entries {slot: "s2_image".."s8_image", scene}. Write ONLY what changes for that slide, in English: the subject's action or arrangement, setting, mood, lighting, composition (e.g. \"a person stands in a dark kitchen at night peeking into an open refrigerator, soft blue-white glow\" or \"overhead desk with a notebook and coffee, warm morning light\"). Do not repeat the fixed rules (who/what the subject looks like, art style, colors), and never ask for text in the image. Each scene must match that slide's message. Use a slot for either an uploaded image or a generated one, not both. Pass [] when illustrations add nothing.`
           : ""
       }
+   generationConfig, when present, is binding: apply global design rules (tone of emphasis, emoji/icon policy, readability) to the copy; satisfy every "requirements" line and post.highlightKeywords (use each keyword verbatim in the slide text); honor post.imageMode (none = no images at all, asset_only = uploaded images only, never imagePrompts); follow post.notes. For a graph page, add an imagePrompts entry for that slot whose scene describes a simple chart (e.g. rising bar chart, clean axes) with NO text or numbers in the image, and put the actual numbers/labels in that slide's body text. For evidence, state the source or figure in the body text of the requested page within its character limit.
+   Backgrounds: when the user message asks for a background, set submit_deck.background {palette, motif} in English: palette = 2-3 colors (e.g. "deep navy and warm coral"); motif = abstract pattern/style (e.g. "soft overlapping circles, flat paper-cut layers"). Match the mood to the idea (calm for worries, energetic for tips) and make it clearly different from the recent ones. Never mention text or objects. Otherwise pass null.
 3) If submit_deck returns ok:false, fix exactly the listed errors and call it again.
 4) Do not answer in free text — submit_deck is your final output.`,
       tools: [get_idea, get_guideline, list_references, list_image_assets, get_job, submit_deck],
@@ -308,14 +404,7 @@ Required workflow:
           : { isFinalOutput: false, isInterrupted: undefined }
     });
 
-    const userMessage = [
-      `ideaId: ${idea.id}`,
-      "Build the 8-slide deck for this idea, then call submit_deck.",
-      input.feedback ? `Operator feedback to apply:\n${input.feedback}` : null,
-      input.previousDeck ? `Previous deck (improve, do not repeat verbatim):\n${JSON.stringify(input.previousDeck)}` : null
-    ]
-      .filter((part): part is string => part !== null)
-      .join("\n\n");
+    const userMessage = buildCreationUserMessage(idea.id, input);
 
     try {
       const result = await run(agent, userMessage, { maxTurns: 20 });

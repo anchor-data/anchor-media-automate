@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { missingTemplateFields, type CanvaClient } from "@ama/integrations";
 import type { Account } from "@ama/shared";
-import { autoRunSettingsSchema } from "@ama/shared";
+import { DEFAULT_DESIGN_RULES, autoRunSettingsSchema, designRulesSchema } from "@ama/shared";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
 
@@ -66,4 +66,21 @@ accountRoutes.put("/accounts/:id/auto-run", async (c) => {
   const item = await repo.updateAccountAutoRun(c.req.param("id"), parsed.data);
   if (!item) return c.json({ error: "Account not found" }, 404);
   return c.json({ item, mode: repo.mode });
+});
+
+/** Account-wide slide design rules; every generated post follows them. */
+accountRoutes.get("/accounts/:id/design-rules", async (c) => {
+  const repo = createRepo(c.env);
+  const account = await repo.getAccount(c.req.param("id"));
+  if (!account) return c.json({ error: "Account not found" }, 404);
+  return c.json({ rules: account.designRules ?? DEFAULT_DESIGN_RULES });
+});
+
+accountRoutes.put("/accounts/:id/design-rules", async (c) => {
+  const parsed = designRulesSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
+  const repo = createRepo(c.env);
+  const account = await repo.updateAccountDesignRules(c.req.param("id"), parsed.data);
+  if (!account) return c.json({ error: "Account not found" }, 404);
+  return c.json({ rules: account.designRules ?? DEFAULT_DESIGN_RULES });
 });

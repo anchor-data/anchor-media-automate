@@ -1,6 +1,6 @@
 import type { Repository } from "@ama/db";
 import { resolveSlideImages, type CanvaClient } from "@ama/integrations";
-import { slideFieldsSchema, slideImagesFrom } from "@ama/shared";
+import { BACKGROUND_SLOTS, deckExtrasFrom, slideFieldsSchema } from "@ama/shared";
 import type { Post } from "@ama/shared";
 import { imageAssetKey } from "./image-assets";
 
@@ -14,7 +14,12 @@ async function loadSlideImages(
   templateId: string,
   bucket: R2Bucket | undefined
 ): Promise<Record<string, string>> {
-  const images = slideImagesFrom(post.slidesJson);
+  const extras = deckExtrasFrom(post.slidesJson);
+  // The one generated background fills every background field the template exposes.
+  const backgrounds = extras.background
+    ? BACKGROUND_SLOTS.map((slot) => ({ slot, assetId: extras.background!.assetId }))
+    : [];
+  const images = [...extras.images, ...backgrounds];
   if (images.length === 0) return {};
   if (!bucket) throw new Error("Post uses images but image storage (R2 IMAGE_ASSETS) is not configured");
   return resolveSlideImages({

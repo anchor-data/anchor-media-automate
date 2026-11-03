@@ -7,10 +7,20 @@ import {
   type CreationToolContext
 } from "@ama/integrations";
 import type { AgentRun, Idea, Post, SlideDeck } from "@ama/shared";
-import { captionWithHashtags, slideFieldsSchema, slideImagesFrom } from "@ama/shared";
+import {
+  backgroundSlotsIn,
+  captionWithHashtags,
+  checkCustomization,
+  deckExtrasFrom,
+  diffSlides,
+  postCustomizationSchema,
+  slideFieldsSchema,
+  slidesJsonWith,
+  type PostCustomization
+} from "@ama/shared";
 import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
-import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
+import { discardGeneratedImages, generateBackground, generateDeckImages } from "../lib/generate-images";
 import { renderPost } from "../lib/render";
 
 export const creationRoutes = new Hono<{ Bindings: Bindings }>();
@@ -41,19 +51,50 @@ export async function generatePost(
   const repo = createRepo(env);
   try {
     await repo.updatePost(postId, { generationStatus: "generating_copy", generationError: null });
-    const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(input, toolContext(repo));
-    const previousImages = slideImagesFrom((await repo.getPost(postId))?.post.slidesJson);
+    // The customization is stored on the post; the account's design rules are read fresh every run.
+    const stored = deckExtrasFrom((await repo.getPost(postId))?.post.slidesJson);
+    const account = await repo.getAccount(input.accountId);
+    const backgroundOn = await backgroundsAvailable(env, repo, account?.canvaTemplateId);
+    const runInput: CreationRunInput = {
+      ...input,
+      background: backgroundOn ? { recent: await recentBackgrounds(repo, input.accountId) } : undefined,
+      customization: input.customization ?? stored.customization,
+      designRules: input.designRules ?? account?.designRules
+    };
+    const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run(runInput, toolContext(repo));
+    const previousImages = [...stored.images, ...(stored.background ? [stored.background] : [])];
     const { images, warnings } = await generateDeckImages(
       repo,
       { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
       input.accountId,
       output.deck
     );
+    const bg = output.deck.background
+      ? await generateBackground(
+          repo,
+          { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
+          input.accountId,
+          output.deck.background,
+          (runInput.customization ?? stored.customization).variationSeed
+        )
+      : { background: null, warnings: [] };
     const post = await repo.updatePost(postId, {
       // Hashtags live inside the caption text; the separate list stays empty so there is one source of truth.
       caption: captionWithHashtags(output.deck.caption, output.deck.hashtags),
       hashtags: [],
-      slidesJson: { ...output.deck.slides, images },
+      slidesJson: slidesJsonWith(output.deck.slides, {
+        images,
+        background: bg.background,
+        customization: runInput.customization ?? stored.customization,
+        report: {
+          at: new Date().toISOString(),
+          diff: input.previousDeck ? diffSlides(input.previousDeck.slides, output.deck.slides) : [],
+          checks: checkCustomization(
+            { slides: output.deck.slides, images, imagePrompts: output.deck.imagePrompts },
+            runInput.customization ?? stored.customization
+          )
+        }
+      }),
       postType: output.deck.postType
     });
     const run: AgentRun = {
@@ -62,7 +103,7 @@ export async function generatePost(
       createdPostId: postId,
       kind,
       summary: output.summary,
-      outputJson: { reasoning: [...output.reasoning, ...warnings], ideaId: input.ideaId }
+      outputJson: { reasoning: [...output.reasoning, ...warnings, ...bg.warnings], ideaId: input.ideaId }
     };
     await repo.createAgentRun(run);
     await discardGeneratedImages(repo, env.IMAGE_ASSETS, previousImages);
@@ -71,6 +112,29 @@ export async function generatePost(
     // renderPost already marks its own failures; this covers agent failures.
     await repo.updatePost(postId, { generationStatus: "failed", generationError: errorMessage(error) });
   }
+}
+
+const RECENT_BACKGROUND_COUNT = 3;
+
+/** Backgrounds only make sense when the template has `sN_bg` fields and images can be stored. */
+async function backgroundsAvailable(env: Bindings, repo: Repository, templateId: string | undefined): Promise<boolean> {
+  if (!templateId || !env.IMAGE_ASSETS) return false;
+  try {
+    return backgroundSlotsIn(await createCanva(env, repo).getTemplateFieldNames(templateId)).length > 0;
+  } catch {
+    // Unreadable template: render will report it; generation continues without a background.
+    return false;
+  }
+}
+
+/** Palette + motif of the account's latest posts, newest first, so the next one can differ. */
+async function recentBackgrounds(repo: Repository, accountId: string) {
+  const posts = await repo.listPostsByAccount(accountId, 10);
+  return posts
+    .map((post) => deckExtrasFrom(post.slidesJson).background)
+    .filter((background): background is NonNullable<typeof background> => background !== null)
+    .slice(0, RECENT_BACKGROUND_COUNT)
+    .map(({ palette, motif }) => ({ palette, motif }));
 }
 
 /** Workers: keep running after the 202 response. Local/test runtimes without executionCtx run inline. */
@@ -82,13 +146,35 @@ async function runInBackground(c: { executionCtx: { waitUntil(promise: Promise<u
   }
 }
 
+/** Body shared by create/regenerate: optional per-post customization, validated and checked against the account. */
+async function parseCustomization(
+  repo: Repository,
+  accountId: string,
+  raw: unknown
+): Promise<{ ok: true; value: PostCustomization | undefined } | { ok: false; error: unknown; status: 400 | 422 }> {
+  if (raw === undefined) return { ok: true, value: undefined };
+  const parsed = postCustomizationSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: parsed.error.flatten(), status: 400 };
+  if (parsed.data.graph.enabled && !(await repo.getAccount(accountId))?.imageStylePrompt?.trim()) {
+    return {
+      ok: false,
+      error: "グラフを入れるにはアカウントの画像スタイルプロンプト (アセット > 画像スタイル) を設定してください",
+      status: 422
+    };
+  }
+  return { ok: true, value: parsed.data };
+}
+
 creationRoutes.post("/ideas/:id/create", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { customization?: unknown };
   const repo = createRepo(c.env);
   const idea = await repo.getIdea(c.req.param("id"));
   if (!idea) return c.json({ error: "Idea not found" }, 404);
   if (idea.status === "used" || idea.status === "rejected") {
     return c.json({ error: `Idea is ${idea.status}` }, 409);
   }
+  const customization = await parseCustomization(repo, idea.accountId, body.customization);
+  if (!customization.ok) return c.json({ error: customization.error }, customization.status);
 
   await repo.updateIdea(idea.id, { status: "selected" });
   const { post } = await repo.createPostDraft({
@@ -97,7 +183,9 @@ creationRoutes.post("/ideas/:id/create", async (c) => {
     caption: "",
     assets: [],
     ideaId: idea.id,
-    generationStatus: "pending"
+    generationStatus: "pending",
+    // Kept on the post so regenerate/auto-run reuse it; replaced by the full deck once generated.
+    slidesJson: customization.value ? { customization: customization.value } : undefined
   });
   await runInBackground(c, generatePost(c.env, post.id, { ideaId: idea.id, accountId: idea.accountId }, "creation"));
   return c.json({ item: post, mode: repo.mode }, 202);
@@ -127,7 +215,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
       const deck: SlideDeck = {
         postType: post.postType,
         slides: parsed.data.slides,
-        images: slideImagesFrom(post.slidesJson),
+        images: deckExtrasFrom(post.slidesJson).images,
         caption: parsed.data.caption ?? post.caption,
         hashtags: parsed.data.hashtags ?? post.hashtags ?? []
       };
@@ -145,7 +233,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
     caption: parsed.data.caption,
     hashtags: parsed.data.hashtags,
     // Edited text keeps the images the agent chose.
-    slidesJson: slides ? { ...slides, images: slideImagesFrom(post.slidesJson) } : undefined,
+    slidesJson: slides ? slidesJsonWith(slides, deckExtrasFrom(post.slidesJson)) : undefined,
     // Edited slides make the stored assets stale until POST /posts/:id/render.
     ...(parsed.data.slides ? { generationStatus: "pending" as const } : {})
   });
@@ -153,7 +241,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
 });
 
 creationRoutes.post("/posts/:id/regenerate", async (c) => {
-  const bodySchema = z.object({ feedback: z.string().optional() });
+  const bodySchema = z.object({ feedback: z.string().optional(), customization: z.unknown().optional() });
   const parsed = bodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
@@ -164,8 +252,22 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
   if (!post.ideaId) return c.json({ error: "Post has no source idea to regenerate from" }, 422);
   if (post.status !== "draft") return c.json({ error: `Only draft posts can be regenerated (is ${post.status})` }, 409);
 
+  const customization = await parseCustomization(repo, post.accountId, parsed.data.customization);
+  if (!customization.ok) return c.json({ error: customization.error }, customization.status);
+
   const previous = slideFieldsSchema.safeParse(post.slidesJson);
-  await repo.updatePost(post.id, { generationStatus: "pending", generationError: null });
+  const extras = deckExtrasFrom(post.slidesJson);
+  await repo.updatePost(post.id, {
+    generationStatus: "pending",
+    generationError: null,
+    // New instructions replace the stored ones now so a failed run still shows what was asked.
+    slidesJson:
+      customization.value && previous.success
+        ? slidesJsonWith(previous.data, { ...extras, customization: customization.value })
+        : customization.value
+          ? { customization: customization.value }
+          : undefined
+  });
   await runInBackground(
     c,
     generatePost(
@@ -175,9 +277,10 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
         ideaId: post.ideaId,
         accountId: post.accountId,
         feedback: parsed.data.feedback,
+        customization: customization.value,
         previousDeck:
           previous.success && post.postType
-            ? { postType: post.postType, slides: previous.data, images: slideImagesFrom(post.slidesJson), caption: post.caption, hashtags: post.hashtags ?? [] }
+            ? { postType: post.postType, slides: previous.data, images: extras.images, caption: post.caption, hashtags: post.hashtags ?? [] }
             : undefined
       },
       "regenerate"

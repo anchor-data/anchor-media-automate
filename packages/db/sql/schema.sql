@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   auto_run_schedule TEXT NOT NULL DEFAULT '毎日 18:00',
   last_auto_run_at TEXT,
   image_style_prompt TEXT NOT NULL DEFAULT '',
+  design_rules_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );

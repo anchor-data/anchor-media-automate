@@ -3,6 +3,7 @@ import type {
   Account,
   AgentRun,
   AutoRunSettings,
+  DesignRules,
   Guideline,
   GuidelineUpsert,
   Idea,
@@ -19,7 +20,13 @@ import type {
   ReferenceCreate,
   ReferenceKind
 } from "@ama/shared";
-import { DEFAULT_AUTO_RUN_SCHEDULE, IMAGE_ASSET_CONTENT_TYPES, IMAGE_ASSET_KINDS } from "@ama/shared";
+import {
+  DEFAULT_AUTO_RUN_SCHEDULE,
+  DEFAULT_DESIGN_RULES,
+  IMAGE_ASSET_CONTENT_TYPES,
+  IMAGE_ASSET_KINDS,
+  designRulesSchema
+} from "@ama/shared";
 
 /** What the dashboard library shows and the agent can use: everything except per-post generated images. */
 const LIBRARY_IMAGE_KINDS: readonly ImageAsset["kind"][] = ["asset", "reference"];
@@ -49,6 +56,7 @@ export interface Repository {
   updateAccountTemplate(accountId: string, canvaTemplateId: string): Promise<Account | null>;
   updateAccountAutoRun(accountId: string, settings: AutoRunSettings): Promise<Account | null>;
   updateAccountImageStyle(accountId: string, imageStylePrompt: string): Promise<Account | null>;
+  updateAccountDesignRules(accountId: string, designRules: DesignRules): Promise<Account | null>;
   markAutoRun(accountId: string, at: string): Promise<void>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
@@ -180,6 +188,13 @@ class MockRepository implements Repository {
     const index = this.accounts.findIndex((a) => a.id === accountId);
     if (index < 0) return null;
     const updated = { ...this.accounts[index]!, imageStylePrompt };
+    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
+    return updated;
+  }
+  async updateAccountDesignRules(accountId: string, designRules: DesignRules) {
+    const index = this.accounts.findIndex((a) => a.id === accountId);
+    if (index < 0) return null;
+    const updated = { ...this.accounts[index]!, designRules };
     this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
     return updated;
   }
@@ -564,6 +579,14 @@ class TursoRepository implements Repository {
     await this.client.execute({
       sql: "UPDATE accounts SET image_style_prompt = ?, updated_at = ? WHERE id = ?",
       args: [imageStylePrompt, nowIso(), accountId]
+    });
+    return this.getAccount(accountId);
+  }
+
+  async updateAccountDesignRules(accountId: string, designRules: DesignRules) {
+    await this.client.execute({
+      sql: "UPDATE accounts SET design_rules_json = ?, updated_at = ? WHERE id = ?",
+      args: [JSON.stringify(designRules), nowIso(), accountId]
     });
     return this.getAccount(accountId);
   }
@@ -1204,6 +1227,16 @@ class TursoRepository implements Repository {
   }
 }
 
+/** Tolerates NULL/legacy/invalid JSON: falls back to the defaults. */
+function parseDesignRules(raw: unknown): DesignRules {
+  try {
+    const parsed = designRulesSchema.safeParse(JSON.parse(typeof raw === "string" && raw ? raw : "{}"));
+    return parsed.success ? parsed.data : DEFAULT_DESIGN_RULES;
+  } catch {
+    return DEFAULT_DESIGN_RULES;
+  }
+}
+
 function mapAccountRow(row: Record<string, unknown>): Account {
   return {
     id: String(row.id),
@@ -1214,7 +1247,8 @@ function mapAccountRow(row: Record<string, unknown>): Account {
     autoRunEnabled: sqliteBool(row.auto_run_enabled),
     autoRunSchedule: row.auto_run_schedule ? String(row.auto_run_schedule) : DEFAULT_AUTO_RUN_SCHEDULE,
     lastAutoRunAt: row.last_auto_run_at == null ? null : String(row.last_auto_run_at),
-    imageStylePrompt: row.image_style_prompt ? String(row.image_style_prompt) : ""
+    imageStylePrompt: row.image_style_prompt ? String(row.image_style_prompt) : "",
+    designRules: parseDesignRules(row.design_rules_json)
   };
 }
 

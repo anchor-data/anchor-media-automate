@@ -1,11 +1,12 @@
 import type { Repository } from "@ama/db";
 import {
+  composeBackgroundPrompt,
   composeImagePrompt,
   generateSlideImage,
   logOpenAiImageBatchCost,
   type ReferenceImage
 } from "@ama/integrations";
-import type { ImageAsset, SlideDeck, SlideImage } from "@ama/shared";
+import type { BackgroundPlan, ImageAsset, SlideDeck, SlideImage, StoredBackground } from "@ama/shared";
 import { imageAssetKey } from "./image-assets";
 
 const MAX_REFERENCE_IMAGES = 4;
@@ -87,11 +88,57 @@ export async function generateDeckImages(
   return { images, warnings };
 }
 
+/**
+ * One portrait background image for the whole post, from the agent's palette + motif. It is placed
+ * in every `sN_bg` field the template has. Returns a warning instead of throwing: a post without a
+ * generated background still renders with the template's own.
+ */
+export async function generateBackground(
+  repo: Repository,
+  deps: { openAiApiKey?: string; bucket?: R2Bucket },
+  accountId: string,
+  plan: BackgroundPlan,
+  variationSeed: string | null
+): Promise<{ background: StoredBackground | null; warnings: string[] }> {
+  if (!deps.bucket) {
+    return { background: null, warnings: ["Background skipped: image storage (R2 IMAGE_ASSETS) is not configured"] };
+  }
+  try {
+    const generated = await generateSlideImage({
+      apiKey: deps.openAiApiKey,
+      prompt: composeBackgroundPrompt(plan, variationSeed),
+      references: [],
+      size: "1024x1536",
+      label: "background"
+    });
+    logOpenAiImageBatchCost(`background account=${accountId}`, [generated.costUsd]);
+    const asset = await repo.createImageAsset(accountId, {
+      label: "generated background",
+      description: `${plan.palette} / ${plan.motif}`.slice(0, 500),
+      contentType: generated.contentType,
+      kind: "generated",
+      sizeBytes: generated.bytes.byteLength
+    });
+    try {
+      await deps.bucket.put(imageAssetKey(asset.id), generated.bytes, { httpMetadata: { contentType: generated.contentType } });
+    } catch (error) {
+      await repo.deleteImageAsset(asset.id);
+      throw error;
+    }
+    return { background: { ...plan, assetId: asset.id }, warnings: [] };
+  } catch (error) {
+    return {
+      background: null,
+      warnings: [`Background failed: ${error instanceof Error ? error.message : "unknown error"}`]
+    };
+  }
+}
+
 /** Delete the generated images of a previous deck once a new one replaced them. */
 export async function discardGeneratedImages(
   repo: Repository,
   bucket: R2Bucket | undefined,
-  previous: readonly SlideImage[]
+  previous: readonly { assetId: string }[]
 ): Promise<void> {
   for (const image of previous) {
     const asset: ImageAsset | null = await repo.getImageAsset(image.assetId);

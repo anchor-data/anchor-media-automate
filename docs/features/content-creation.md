@@ -42,6 +42,21 @@ Character limits are enforced in `@ama/shared` (`slideDeckSchema`). See `canva-t
 
 **Slide 7 rule (default):** if idea has `job_id` and guideline `job_pick_enabled`, fill job fields; otherwise summary/checklist fallback.
 
+## Generation customization
+
+Two layers feed the creation agent as one structured `generationConfig` (`buildGenerationConfig` in `@ama/shared`):
+
+- **Global design rules** (per account, `accounts.design_rules_json`, `GET/PUT /accounts/:id/design-rules`): font, title position, emphasis rule, color patterns, emoji/icon policy, readability rules. UI: ガイドライン > デザインルール.
+- **Per-post customization** (`PostCustomization`, stored inside `posts.slides_json.customization`): `highlightKeywords`, `graph {enabled,page}`, `evidence {enabled,page}`, `imageMode` (`auto|none|asset_only`), `variationSeed`, `notes`. Sent as `customization` in `POST /ideas/:id/create` and `POST /posts/:id/regenerate`.
+
+Rules: graph needs `imageMode=auto` and an account image style prompt (the chart is an AI-generated image in that page's `sN_image` slot; numbers go in body text). Graph and evidence cannot share a page. `validateDeck` rejects decks that ignore keywords, graph page or image mode, so the agent retries.
+
+After each run, `slides_json.report` holds `checks` (instruction reflected?) and `diff` (changed fields vs. the previous deck; empty on first generation). The editor shows it. Evidence and notes are instructions only and are not machine-checked.
+
+## Visual variety
+
+Posts would otherwise look identical because the Canva template is fixed. When the template has `s1_bg`…`s8_bg` image fields (see `canva-template-spec.md`), the agent chooses a palette + motif per post (avoiding the last 3 posts'), a background is generated and autofilled. Regenerating a post produces a new background. Turn it off by removing the fields from the template.
+
 ## Status machine
 
 **Post status**

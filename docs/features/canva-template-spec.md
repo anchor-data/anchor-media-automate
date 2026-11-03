@@ -41,6 +41,14 @@ Optional footer text (handle, page numbers) can be static in the Canva design ra
 - Bytes live in the R2 bucket bound as `IMAGE_ASSETS`; the Canva asset id is cached on the `image_assets` row.
 - Run `db setup` to create the `image_assets` table.
 
+## Optional background fields (per-post look)
+
+Autofill cannot recolor a template, so each post gets a different look through a **generated background image**. Add Canva **image** data fields `s1_bg` … `s8_bg` (any subset) on a full-bleed layer at the bottom of each page, with the image fit set to fill/crop (the image is portrait 1024x1536). Templates without them keep working: no background is generated.
+
+- The creation agent picks a palette (from the account's design-rule color patterns when set) and a motif per post, and is told the last 3 posts' backgrounds so it differs. A repeat of both is rejected by `validateDeck`.
+- One image per post is generated (`gpt-image-1`, no reference images) and reused in every `sN_bg` field the template has. It is stored as a `generated` image asset and referenced from `posts.slides_json.background`.
+- Keep the middle of each page calm: the prompt asks for a low-contrast center so slide text stays legible. Check text contrast in your template (e.g. put text on a semi-transparent panel).
+
 ## Autofill payload shape
 
 ```json

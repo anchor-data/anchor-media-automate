@@ -72,3 +72,19 @@ describe("validateImageUpload", () => {
     expect(validateImageUpload({ contentType: "image/png", size: IMAGE_ASSET_MAX_BYTES + 1 }).ok).toBe(false);
   });
 });
+
+describe("resolveSlideImages with background slots", () => {
+  it("accepts non-image slot names that the template exposes", async () => {
+    const result = await resolveSlideImages({
+      images: [
+        { slot: "s1_bg", assetId: "a" },
+        { slot: "s2_bg", assetId: "a" },
+        { slot: "s3_bg", assetId: "a" }
+      ],
+      assets: [asset("a")],
+      templateFields: ["s1_bg", "s2_bg"],
+      upload: async () => "canva_a"
+    });
+    expect(result).toEqual({ s1_bg: "canva_a", s2_bg: "canva_a" });
+  });
+});

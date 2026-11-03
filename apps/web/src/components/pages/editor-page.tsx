@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { slideFieldsSchema, type SlideFields } from "@ama/shared";
+import { EMPTY_CUSTOMIZATION, slideFieldsSchema, type PostCustomization, type SlideFields } from "@ama/shared";
+import { CustomizationForm, customizationIssues } from "../customization-form";
+import { GenerationReportPanel } from "../generation-report";
 import { Icon } from "../icon";
 import { SlideTile } from "../slide-tile";
 import { PageTopbar, Tabs } from "../ui/page";
@@ -30,6 +32,10 @@ function sameSlides(a: SlideFields | undefined, b: SlideFields | undefined): boo
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+function sameCustomization(a: PostCustomization, b: PostCustomization | undefined): boolean {
+  return JSON.stringify(a) === JSON.stringify(b ?? EMPTY_CUSTOMIZATION);
+}
+
 function EditorBody({ post }: { post: MockPost }) {
   const router = useRouter();
   const { savePostSlides, savePostCaption, retryGeneration, reloadPostAssets, selectPost, notify } = useWorkspace();
@@ -40,6 +46,7 @@ function EditorBody({ post }: { post: MockPost }) {
   const [saving, setSaving] = useState(false);
   const [sendingBack, setSendingBack] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [customization, setCustomization] = useState<PostCustomization>(post.customization ?? EMPTY_CUSTOMIZATION);
 
   // Server copy arrives after generation or re-render; adopt it unless the user is mid-edit.
   const serverSlides = post.slides;
@@ -95,11 +102,15 @@ function EditorBody({ post }: { post: MockPost }) {
   };
 
   const sendBack = async () => {
-    if (!feedback.trim()) {
-      notify("差し戻しの理由を入力してください");
+    if (!feedback.trim() && sameCustomization(customization, post.customization)) {
+      notify("差し戻しの理由か、カスタマイズ指示を入力してください");
       return;
     }
-    await retryGeneration(post.id, feedback.trim());
+    if (customizationIssues(customization).length > 0) {
+      notify("カスタマイズ指示を確認してください");
+      return;
+    }
+    await retryGeneration(post.id, feedback.trim() || undefined, customization);
     notify("差し戻して再生成を開始しました");
     setSendingBack(false);
     setFeedback("");
@@ -150,11 +161,18 @@ function EditorBody({ post }: { post: MockPost }) {
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
           />
+          <details style={{ width: "100%" }}>
+            <summary className="small">生成前カスタマイズ (グラフ・エビデンス・強調語など)</summary>
+            <div className="pad-t-16">
+              <CustomizationForm value={customization} onChange={setCustomization} />
+            </div>
+          </details>
           <button className="btn primary" onClick={() => void sendBack()}>
             この内容で再生成
           </button>
         </div>
       ) : null}
+      {post.report ? <GenerationReportPanel report={post.report} /> : null}
       {!editable ? <div className="banner info">この投稿は{STAGE_LABEL[stage]}のため編集できません(下書きのみ編集可能)。</div> : null}
 
       <div className="split editor">

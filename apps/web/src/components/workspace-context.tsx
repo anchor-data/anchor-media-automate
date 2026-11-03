@@ -13,6 +13,7 @@ import {
   DEFAULT_AUTO_RUN_SCHEDULE,
   autoRunSettingsSchema,
   captionWithHashtags,
+  deckExtrasFrom,
   slideFieldsSchema,
   type Guideline,
   type GuidelineUpsert,
@@ -20,6 +21,7 @@ import {
   type MemoryItem,
   type Post,
   type PostAsset,
+  type PostCustomization,
   type Reference,
   type SlideFields
 } from "@ama/shared";
@@ -109,9 +111,9 @@ interface WorkspaceValue {
   /** Re-export the stored Canva design (preview URLs expire). */
   reloadPostAssets: (id: string) => Promise<void>;
   /** Re-run the creation agent for a draft, optionally with reviewer feedback. */
-  retryGeneration: (id: string, feedback?: string) => Promise<void>;
+  retryGeneration: (id: string, feedback?: string, customization?: PostCustomization) => Promise<void>;
   /** Creates content from an idea; resolves to the new post id (null on failure). */
-  addDraftFromIdea: (idea: IdeaCandidate) => Promise<string | null>;
+  addDraftFromIdea: (idea: IdeaCandidate, customization?: PostCustomization) => Promise<string | null>;
   rejectIdea: (ideaId: string, reason: string) => Promise<void>;
   generateIdeasFromApi: (input: IdeationInput) => Promise<IdeaCandidate[]>;
   saveGuidelineDetails: (accountId: string, body: GuidelineUpsert) => Promise<void>;
@@ -181,6 +183,7 @@ function errorText(error: unknown): string {
 
 function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[]): MockPost {
   const slides = slideFieldsSchema.safeParse(post.slidesJson);
+  const extras = deckExtrasFrom(post.slidesJson);
   const dateIso = post.scheduledAt ?? post.createdAt;
   return {
     id: post.id,
@@ -206,7 +209,9 @@ function mapApiPost(post: Post, ideaTarget: string, assets?: readonly PostAsset[
     generationError: post.generationError ?? null,
     assetUrls: assets ? assetUrlsOf(assets) : undefined,
     canvaDesignId: assets ? canvaDesignIdOf(assets) : undefined,
-    slides: slides.success ? slides.data : undefined
+    slides: slides.success ? slides.data : undefined,
+    customization: extras.customization,
+    report: extras.report
   };
 }
 
@@ -521,22 +526,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           notify(`プレビューの更新に失敗しました: ${errorText(error)}`);
         }
       },
-      retryGeneration: async (id, feedback) => {
+      retryGeneration: async (id, feedback, customization) => {
         try {
-          const { item } = await regeneratePost(id, feedback);
+          const { item } = await regeneratePost(id, feedback, customization);
           replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: undefined }));
         } catch (error) {
           notify(`再生成に失敗しました: ${errorText(error)}`);
         }
       },
-      addDraftFromIdea: async (idea) => {
+      addDraftFromIdea: async (idea, customization) => {
         const target = targetOf();
         const markSelected = () =>
           setIdeas((prev) => prev.map((i) => (i.id === idea.id ? { ...i, status: "selected" } : i)));
 
         if (apiReady) {
           try {
-            const { item } = await createContent(idea.id);
+            const { item } = await createContent(idea.id, customization);
             setPosts((prev) => [...prev, mapApiPost(item, target)]);
             markSelected();
             return item.id;

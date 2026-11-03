@@ -1,4 +1,4 @@
-import { AUTO_RUN_SCHEDULES, type GenerationStatus, type PostStatus as ApiPostStatus, type SlideFields } from "@ama/shared";
+import { AUTO_RUN_SCHEDULES, type GenerationStatus, type PostStatus as ApiPostStatus, type GenerationReport, type PostCustomization, type SlideFields } from "@ama/shared";
 
 export type PostStatus = "draft" | "scheduled" | "published";
 
@@ -27,6 +27,10 @@ export interface MockPost {
   readonly canvaDesignId?: string;
   /** Slide copy the agent produced; undefined for offline drafts. */
   readonly slides?: SlideFields;
+  /** Per-post instructions the deck was generated with. */
+  readonly customization?: PostCustomization;
+  /** Checks and diff from the latest generation. */
+  readonly report?: GenerationReport | null;
 }
 
 export interface MockAccount {

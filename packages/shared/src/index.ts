@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { backgroundPlanSchema, designRulesSchema } from "./customization";
 
 export const accountSchema = z.object({
   id: z.string(),
@@ -12,7 +13,9 @@ export const accountSchema = z.object({
   autoRunSchedule: z.string().optional(),
   lastAutoRunAt: z.string().nullable().optional(),
   /** Fixed image rules (subject, style, palette, background) prepended to every generated slide image prompt. */
-  imageStylePrompt: z.string().optional()
+  imageStylePrompt: z.string().optional(),
+  /** Account-wide slide design rules (font, title position, emphasis, colors...). */
+  designRules: designRulesSchema.optional()
 });
 export type Account = z.infer<typeof accountSchema>;
 
@@ -336,6 +339,8 @@ export const slideDeckSchema = z.object({
   images: z.array(slideImageSchema).max(SLIDE_IMAGE_SLOTS.length).optional(),
   /** Slides whose image should be AI-generated; resolved into `images` before the post is stored. */
   imagePrompts: z.array(slideImagePromptSchema).max(SLIDE_IMAGE_SLOTS.length).optional(),
+  /** Look of this post (palette + motif); resolved into a generated background image. */
+  background: backgroundPlanSchema.optional(),
   caption: z.string().max(2200),
   hashtags: z.array(z.string()).max(30)
 });
@@ -403,3 +408,5 @@ export function captionWithHashtags(caption: string, hashtags: readonly string[]
   if (missing.length === 0) return body;
   return body ? `${body}\n\n${missing.join(" ")}` : missing.join(" ");
 }
+
+export * from "./customization";
