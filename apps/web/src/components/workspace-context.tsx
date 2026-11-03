@@ -113,7 +113,7 @@ interface WorkspaceValue {
   /** Re-export the stored Canva design (preview URLs expire). */
   reloadPostAssets: (id: string) => Promise<void>;
   /** Re-run the creation agent for a draft, optionally with reviewer feedback. */
-  retryGeneration: (id: string, feedback?: string) => Promise<void>;
+  retryGeneration: (id: string, feedback?: string, slideIndex?: number) => Promise<void>;
   /** Another take on a draft's design (free-text prompt optional) and a fresh Canva render. */
   redesignPost: (id: string, prompt?: string) => Promise<void>;
   /** Creates content from an idea; resolves to the new post id (null on failure). */
@@ -529,10 +529,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           notify(`プレビューの更新に失敗しました: ${errorText(error)}`);
         }
       },
-      retryGeneration: async (id, feedback) => {
+      retryGeneration: async (id, feedback, slideIndex) => {
         try {
-          const { item } = await regeneratePost(id, feedback);
-          replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: undefined }));
+          const { item } = await regeneratePost(id, feedback, slideIndex);
+          // A single-slide run leaves the other slides as they are, so their images stay visible.
+          replacePost(id, (p) => ({ ...mapApiPost(item, p.ideaTarget), assetUrls: slideIndex === undefined ? undefined : p.assetUrls }));
         } catch (error) {
           notify(`再生成に失敗しました: ${errorText(error)}`);
         }

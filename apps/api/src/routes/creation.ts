@@ -22,6 +22,7 @@ import { z } from "zod";
 import { createCanva, createRepo, type Bindings } from "../lib/env";
 import { discardGeneratedImages, generateDeckImages } from "../lib/generate-images";
 import { renderPost } from "../lib/render";
+import { keepOtherImages, mergeSinglePage } from "../lib/single-slide";
 
 export const creationRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -46,7 +47,9 @@ export async function generatePost(
   env: Bindings,
   postId: string,
   input: CreationRunInput,
-  kind: "creation" | "regenerate"
+  kind: "creation" | "regenerate",
+  /** 1-based page to regenerate on its own; everything else of the post stays as it is. */
+  onlyPage?: number
 ): Promise<void> {
   const repo = createRepo(env);
   try {
@@ -55,13 +58,17 @@ export async function generatePost(
     const stored = deckExtrasFrom((await repo.getPost(postId))?.post.slidesJson);
     // A post keeps its own structure; a new one takes the account's.
     const structure = stored.structure ?? (await repo.getAccount(input.accountId))?.design?.structure ?? DEFAULT_STRUCTURE;
-    const output = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run({ ...input, structure }, toolContext(repo));
+    const agentOutput = await createCreationAgent({ openAiApiKey: env.OPENAI_API_KEY }).run({ ...input, structure }, toolContext(repo));
+    const previousDeck = onlyPage !== undefined ? input.previousDeck : undefined;
+    const deck = previousDeck ? mergeSinglePage(previousDeck, agentOutput.deck, onlyPage!) : agentOutput.deck;
+    const output = { ...agentOutput, deck };
     const generated = await generateDeckImages(
       repo,
       { openAiApiKey: env.OPENAI_API_KEY, bucket: env.IMAGE_ASSETS },
       input.accountId,
-      output.deck
+      deck
     );
+    const images = previousDeck ? keepOtherImages(stored.images, generated.images, onlyPage!) : generated.images;
     let costUsd = addCost({ copy: 0, images: 0, design: 0 }, "copy", output.costUsd);
     costUsd = addCost(costUsd, "images", generated.costUsd);
     // Regenerated copy keeps what the post already cost; the new run adds to it.
@@ -72,16 +79,16 @@ export async function generatePost(
     };
     const post = await repo.updatePost(postId, {
       // Hashtags live inside the caption text; the separate list stays empty so there is one source of truth.
-      caption: captionWithHashtags(output.deck.caption, output.deck.hashtags),
-      hashtags: [],
-      slidesJson: slidesJsonWith(output.deck.slides, {
-        images: generated.images,
+      // A single-page regeneration leaves the caption alone.
+      ...(previousDeck ? {} : { caption: captionWithHashtags(deck.caption, deck.hashtags), hashtags: [] }),
+      slidesJson: slidesJsonWith(deck.slides, {
+        images,
         design: stored.design,
         designPrompt: stored.designPrompt,
         costUsd,
         structure
       }),
-      postType: output.deck.postType
+      postType: deck.postType
     });
     const run: AgentRun = {
       id: `run_${crypto.randomUUID()}`,
@@ -92,7 +99,9 @@ export async function generatePost(
       outputJson: { reasoning: [...output.reasoning, ...generated.warnings], ideaId: input.ideaId, costUsd: output.costUsd ?? null }
     };
     await repo.createAgentRun(run);
-    await discardGeneratedImages(repo, env.IMAGE_ASSETS, stored.images);
+    // Only images that are no longer used go away (a single-page run keeps the other pages' images).
+    const kept = new Set(images.map((image) => image.assetId));
+    await discardGeneratedImages(repo, env.IMAGE_ASSETS, stored.images.filter((image) => !kept.has(image.assetId)));
     if (post) await renderPost(repo, createCanva(env, repo), post, { imageBucket: env.IMAGE_ASSETS });
   } catch (error) {
     // renderPost already marks its own failures; this covers agent failures.
@@ -181,7 +190,7 @@ creationRoutes.patch("/posts/:id", async (c) => {
 });
 
 creationRoutes.post("/posts/:id/regenerate", async (c) => {
-  const bodySchema = z.object({ feedback: z.string().optional() });
+  const bodySchema = z.object({ feedback: z.string().max(1000).optional(), slideIndex: z.number().int().min(0).max(9).optional() });
   const parsed = bodySchema.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ error: parsed.error.flatten() }, 400);
 
@@ -194,6 +203,11 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
 
   const previous = parseDeckSlides(post.slidesJson);
   const extras = deckExtrasFrom(post.slidesJson);
+  const pages = (extras.structure ?? DEFAULT_STRUCTURE).length;
+  const slideIndex = parsed.data.slideIndex;
+  if (slideIndex !== undefined && (slideIndex >= pages || !previous || !post.postType)) {
+    return c.json({ error: "That slide cannot be regenerated on its own" }, 422);
+  }
   await repo.updatePost(post.id, { generationStatus: "pending", generationError: null });
   await runInBackground(
     c,
@@ -209,7 +223,8 @@ creationRoutes.post("/posts/:id/regenerate", async (c) => {
             ? ({ postType: post.postType, slides: previous.slides, images: extras.images, caption: post.caption, hashtags: post.hashtags ?? [] } as SlideDeck)
             : undefined
       },
-      "regenerate"
+      "regenerate",
+      slideIndex === undefined ? undefined : slideIndex + 1
     )
   );
   return c.json({ item: { ...post, generationStatus: "pending" }, mode: repo.mode }, 202);

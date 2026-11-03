@@ -198,10 +198,10 @@ export async function createContent(ideaId: string) {
   return request<{ item: Post }>(`/ideas/${ideaId}/create`, { method: "POST" });
 }
 
-export async function regeneratePost(postId: string, feedback?: string) {
+export async function regeneratePost(postId: string, feedback?: string, slideIndex?: number) {
   return request<{ item: Post }>(`/posts/${postId}/regenerate`, {
     method: "POST",
-    body: JSON.stringify({ feedback })
+    body: JSON.stringify({ feedback, slideIndex })
   });
 }
 

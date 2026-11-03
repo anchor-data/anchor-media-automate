@@ -33,7 +33,8 @@ export type IconName =
   | "download"
   | "trash"
   | "refresh"
-  | "sliders";
+  | "sliders"
+  | "info";
 
 const PATHS: Record<IconName, ReactNode> = {
   calendar: (
@@ -139,6 +140,12 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   home: <path d="M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" />,
+  info: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5M12 8h.01" />
+    </>
+  ),
   "bar-chart": <path d="M4 20V4M4 20h16M9 16v-5M14 16V8M19 16v-9" />,
   bell: (
     <>
