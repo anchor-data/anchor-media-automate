@@ -178,3 +178,10 @@ Detail: [`features/design.md`](./features/design.md), [`features/onboarding.md`]
 | [`features/design.md`](./features/design.md) | Design, renderer, structure, cost |
 | [`features/onboarding.md`](./features/onboarding.md) | Add-account wizard |
 | [`phase-0-feasibility.md`](./phase-0-feasibility.md) | Canva & Agents risks |
+
+
+## Instagram connect + scheduled publish
+
+- Per-account OAuth via *Instagram API with Instagram Login* (`/api/accounts/:id/instagram/connect` → `/api/instagram/callback`). Long-lived token stored in `instagram_connections`, refreshed by the cron within 14 days of expiry.
+- `POST /posts/:id/schedule` stores the time; the `*/10 * * * *` cron publishes due posts as a carousel (2-10 images) and records `instagram_media_id` / `instagram_permalink`, or `publish_error` with status `failed` (reschedule to retry).
+- Setup: create a Meta app, add the Instagram product, register redirect URI `https://<host>/api/instagram/callback`, set `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET`, run `pnpm --filter @ama/db setup:turso` to add the new table/columns. `instagram_business_content_publish` needs App Review before non-tester accounts can connect.

@@ -4,6 +4,7 @@ import type {
   Guideline,
   GuidelineUpsert,
   Idea,
+  InstagramConnectionStatus,
   ImageAsset,
   Job,
   MemoryItem,
@@ -185,6 +186,19 @@ export async function putAutoRun(accountId: string, body: AutoRunSettings) {
     method: "PUT",
     body: JSON.stringify(body)
   });
+}
+
+export async function getInstagramStatus(accountId: string) {
+  return request<{ item: InstagramConnectionStatus; configured: boolean }>(`/accounts/${accountId}/instagram`);
+}
+
+/** Url on instagram.com where the account owner grants access. */
+export async function startInstagramConnect(accountId: string) {
+  return request<{ url: string }>(`/accounts/${accountId}/instagram/connect`, { method: "POST" });
+}
+
+export async function disconnectInstagram(accountId: string) {
+  return request<{ ok: true }>(`/accounts/${accountId}/instagram`, { method: "DELETE" });
 }
 
 export type PostDetail = { post: Post; assets: PostAsset[] };

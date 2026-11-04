@@ -130,6 +130,9 @@ CREATE TABLE IF NOT EXISTS posts (
   generation_error TEXT,
   reject_reason TEXT,
   scheduled_at TEXT,
+  publish_error TEXT,
+  instagram_media_id TEXT,
+  instagram_permalink TEXT,
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
@@ -163,6 +166,17 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   summary TEXT NOT NULL,
   output_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+);
+
+-- One Instagram link per account. Long-lived token (~60 days), refreshed by the cron.
+CREATE TABLE IF NOT EXISTS instagram_connections (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+  ig_user_id TEXT NOT NULL,
+  username TEXT NOT NULL DEFAULT '',
+  access_token TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  connected_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+  updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
 -- Canva rotates the refresh_token on every exchange, so the latest one lives here (single row).

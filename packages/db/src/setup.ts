@@ -19,6 +19,12 @@ const IMAGE_ASSET_COLUMN_MIGRATIONS = [
   "kind TEXT NOT NULL DEFAULT 'asset' CHECK (kind IN ('asset', 'reference', 'generated'))"
 ] as const;
 
+const POST_COLUMN_MIGRATIONS = [
+  "publish_error TEXT",
+  "instagram_media_id TEXT",
+  "instagram_permalink TEXT"
+] as const;
+
 async function main() {
   await loadRootEnv();
   const url = process.env.TURSO_DATABASE_URL;
@@ -51,6 +57,14 @@ async function main() {
   for (const column of ACCOUNT_COLUMN_MIGRATIONS) {
     try {
       await client.execute(`ALTER TABLE accounts ADD COLUMN ${column}`);
+    } catch (error) {
+      if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error;
+    }
+  }
+
+  for (const column of POST_COLUMN_MIGRATIONS) {
+    try {
+      await client.execute(`ALTER TABLE posts ADD COLUMN ${column}`);
     } catch (error) {
       if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error;
     }

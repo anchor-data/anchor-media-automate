@@ -65,9 +65,20 @@ export const postSchema = z.object({
   scheduledAt: z.string().nullable().optional(),
   generationStatus: generationStatusSchema.optional(),
   generationError: z.string().nullable().optional(),
-  rejectReason: z.string().nullable().optional()
+  rejectReason: z.string().nullable().optional(),
+  publishError: z.string().nullable().optional(),
+  instagramMediaId: z.string().nullable().optional(),
+  instagramPermalink: z.string().nullable().optional()
 });
 export type Post = z.infer<typeof postSchema>;
+
+/** What the dashboard may know about an account's Instagram link. Never includes the token. */
+export const instagramConnectionStatusSchema = z.object({
+  connected: z.boolean(),
+  username: z.string().optional(),
+  expiresAt: z.string().optional()
+});
+export type InstagramConnectionStatus = z.infer<typeof instagramConnectionStatusSchema>;
 
 export const postAssetSchema = z.object({
   id: z.string(),

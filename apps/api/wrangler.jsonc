@@ -23,7 +23,7 @@
     }
   ],
   "triggers": {
-    "crons": ["0 * * * *"]
+    "crons": ["0 * * * *", "*/10 * * * *"]
   },
   "vars": {
     "ALLOWED_ORIGIN": "https://anchor-media.anchor-ltd.tech"

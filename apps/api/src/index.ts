@@ -3,14 +3,19 @@ import { cors } from "hono/cors";
 import type { AgentRun, Post } from "@ama/shared";
 import type { Repository } from "@ama/db";
 import { agentRunRequestSchema } from "@ama/shared";
-import { createAgentRunner, createInstagramClient } from "@ama/integrations";
+import { createAgentRunner } from "@ama/integrations";
 import { z } from "zod";
 import { runDueAutoRuns } from "./lib/auto-run";
+import { publishDuePosts, refreshExpiringTokens } from "./lib/instagram-publish";
 import { createCanva, createRepo, type Bindings } from "./lib/env";
 import { accountRoutes } from "./routes/accounts";
 import { creationRoutes } from "./routes/creation";
 import { ideationRoutes } from "./routes/ideation";
 import { imageRoutes } from "./routes/images";
+import { instagramRoutes } from "./routes/instagram";
+
+/** Must match the second entry of `triggers.crons` in wrangler.jsonc. */
+const PUBLISH_CRON = "*/10 * * * *";
 
 const app = new Hono<{ Bindings: Bindings }>();
 app.use("*", async (c, next) => {
@@ -22,6 +27,7 @@ app.route("/", ideationRoutes);
 app.route("/", creationRoutes);
 app.route("/", imageRoutes);
 app.route("/", accountRoutes);
+app.route("/", instagramRoutes);
 
 app.get("/health", (c) => {
   return c.json({
@@ -33,7 +39,7 @@ app.get("/health", (c) => {
     integrations: {
       openai: Boolean(c.env.OPENAI_API_KEY),
       canva: Boolean(c.env.CANVA_CLIENT_ID && c.env.CANVA_CLIENT_SECRET),
-      instagram: Boolean(c.env.INSTAGRAM_ACCESS_TOKEN)
+      instagram: Boolean(c.env.INSTAGRAM_APP_ID && c.env.INSTAGRAM_APP_SECRET)
     }
   });
 });
@@ -136,25 +142,6 @@ app.post("/agent/regenerate", async (c) => {
   return c.json({ item: saved ?? updated, mode: runner.mode });
 });
 
-app.post("/instagram/publish/:id", async (c) => {
-  const repo = createRepo(c.env);
-  const detail = await repo.getPost(c.req.param("id"));
-  if (!detail) return c.json({ error: "Post not found" }, 404);
-  if (detail.post.status !== "approved") {
-    return c.json({ error: "Only approved posts can be published" }, 422);
-  }
-  const instagram = createInstagramClient({
-    instagramAccessToken: c.env.INSTAGRAM_ACCESS_TOKEN
-  });
-  const published = await instagram.publishCarousel({
-    accountId: detail.post.accountId,
-    caption: detail.post.caption,
-    imageUrls: detail.assets.map((asset) => asset.imageUrl)
-  });
-  await repo.setPostStatus(detail.post.id, "published");
-  return c.json({ item: published, mode: instagram.mode });
-});
-
 async function get_candidate_jobs(repo: Repository) {
   return repo.listJobs();
 }
@@ -216,8 +203,22 @@ root.route("/api", app);
 
 export default {
   fetch: root.fetch,
-  // Hourly cron (see wrangler.jsonc): generates ideas + content for accounts with auto run enabled.
+  // Two crons (see wrangler.jsonc): hourly auto-run of ideas + content, and a 10-minute publisher
+  // for due scheduled posts plus Instagram token refresh. They never share an invocation, so a
+  // post can't be picked up twice.
   async scheduled(controller: ScheduledController, env: Bindings, ctx: ExecutionContext) {
+    if (controller.cron === PUBLISH_CRON) {
+      ctx.waitUntil(
+        (async () => {
+          const now = new Date(controller.scheduledTime);
+          for (const r of (await publishDuePosts(env, now)).filter((x) => !x.ok)) {
+            console.error(`publish failed for ${r.postId}: ${r.error}`);
+          }
+          await refreshExpiringTokens(env, now);
+        })()
+      );
+      return;
+    }
     ctx.waitUntil(
       runDueAutoRuns(env, new Date(controller.scheduledTime)).then((results) => {
         for (const r of results.filter((x) => !x.ok)) {
