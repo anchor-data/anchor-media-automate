@@ -43,6 +43,14 @@ export type DraftInput = {
   generationStatus?: Post["generationStatus"];
 };
 
+export type InstagramConnection = {
+  accountId: string;
+  igUserId: string;
+  username: string;
+  accessToken: string;
+  expiresAt: string;
+};
+
 export interface Repository {
   mode: "mock" | "turso";
   listJobs(): Promise<Job[]>;
@@ -78,6 +86,16 @@ export interface Repository {
   createAgentRun(run: AgentRun): Promise<void>;
   /** Swap all slide assets of a post for a fresh render. */
   replacePostAssets(postId: string, assets: DraftInput["assets"]): Promise<PostAsset[]>;
+
+  getInstagramConnection(accountId: string): Promise<InstagramConnection | null>;
+  saveInstagramConnection(connection: InstagramConnection): Promise<void>;
+  deleteInstagramConnection(accountId: string): Promise<void>;
+  /** Connections whose token expires before `beforeIso`. */
+  listInstagramConnectionsExpiringBefore(beforeIso: string): Promise<InstagramConnection[]>;
+  /** Scheduled posts whose `scheduledAt` has passed. */
+  listDueScheduledPosts(nowIso: string): Promise<Post[]>;
+  markPostPublished(postId: string, result: { mediaId: string; permalink: string }): Promise<Post | null>;
+  markPostPublishFailed(postId: string, error: string): Promise<Post | null>;
 
   getCanvaRefreshToken(): Promise<string | null>;
   saveCanvaRefreshToken(token: string): Promise<void>;
@@ -209,6 +227,7 @@ class MockRepository implements Repository {
     if (!this.accounts.some((a) => a.id === accountId)) return false;
     const postIds = new Set(this.posts.filter((p) => p.accountId === accountId).map((p) => p.id));
     this.accounts = this.accounts.filter((a) => a.id !== accountId);
+    this.instagramConnections.delete(accountId);
     this.posts = this.posts.filter((p) => !postIds.has(p.id));
     this.assets = this.assets.filter((a) => !postIds.has(a.postId));
     this.agentRuns = this.agentRuns.filter((r) => r.accountId !== accountId);
@@ -300,6 +319,41 @@ class MockRepository implements Repository {
     }));
     this.assets = [...this.assets.filter((a) => a.postId !== postId), ...next];
     return next;
+  }
+
+  private instagramConnections = new Map<string, InstagramConnection>();
+  async getInstagramConnection(accountId: string) {
+    return this.instagramConnections.get(accountId) ?? null;
+  }
+  async saveInstagramConnection(connection: InstagramConnection) {
+    this.instagramConnections.set(connection.accountId, connection);
+  }
+  async deleteInstagramConnection(accountId: string) {
+    this.instagramConnections.delete(accountId);
+  }
+  async listInstagramConnectionsExpiringBefore(beforeIso: string) {
+    return [...this.instagramConnections.values()].filter((c) => c.expiresAt < beforeIso);
+  }
+  async listDueScheduledPosts(nowIso: string) {
+    return this.posts.filter((p) => p.status === "scheduled" && p.scheduledAt != null && p.scheduledAt <= nowIso);
+  }
+  async markPostPublished(postId: string, result: { mediaId: string; permalink: string }) {
+    const post = this.posts.find((p) => p.id === postId);
+    if (!post) return null;
+    Object.assign(post, {
+      status: "published" as const,
+      publishError: null,
+      instagramMediaId: result.mediaId,
+      instagramPermalink: result.permalink,
+      updatedAt: nowIso()
+    });
+    return post;
+  }
+  async markPostPublishFailed(postId: string, error: string) {
+    const post = this.posts.find((p) => p.id === postId);
+    if (!post) return null;
+    Object.assign(post, { status: "failed" as const, publishError: error, updatedAt: nowIso() });
+    return post;
   }
 
   private canvaRefreshToken: string | null = null;
@@ -516,20 +570,14 @@ class TursoRepository implements Repository {
 
   async listPosts() {
     const result = await this.client.execute(
-      `SELECT id, account_id, idea_id, post_type, title, caption, slides_json, hashtags_json,
-              status, generation_status, generation_error, reject_reason, scheduled_at,
-              created_at, updated_at
-       FROM posts ORDER BY created_at DESC`
+      `SELECT ${POST_COLUMNS} FROM posts ORDER BY created_at DESC`
     );
     return result.rows.map(mapPostRow);
   }
 
   async getPost(postId: string) {
     const postResult = await this.client.execute({
-      sql: `SELECT id, account_id, idea_id, post_type, title, caption, slides_json, hashtags_json,
-                   status, generation_status, generation_error, reject_reason, scheduled_at,
-                   created_at, updated_at
-            FROM posts WHERE id = ?`,
+      sql: `SELECT ${POST_COLUMNS} FROM posts WHERE id = ?`,
       args: [postId]
     });
     const first = postResult.rows[0];
@@ -548,10 +596,7 @@ class TursoRepository implements Repository {
 
   async listPostsByAccount(accountId: string, limit: number) {
     const result = await this.client.execute({
-      sql: `SELECT id, account_id, idea_id, post_type, title, caption, slides_json, hashtags_json,
-                   status, generation_status, generation_error, reject_reason, scheduled_at,
-                   created_at, updated_at
-            FROM posts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`,
+      sql: `SELECT ${POST_COLUMNS} FROM posts WHERE account_id = ? ORDER BY created_at DESC LIMIT ?`,
       args: [accountId, limit]
     });
     return result.rows.map(mapPostRow);
@@ -622,6 +667,7 @@ class TursoRepository implements Repository {
         { sql: "DELETE FROM content_references WHERE account_id = ?", args: [accountId] },
         { sql: "DELETE FROM image_assets WHERE account_id = ?", args: [accountId] },
         { sql: "DELETE FROM guidelines WHERE account_id = ?", args: [accountId] },
+        { sql: "DELETE FROM instagram_connections WHERE account_id = ?", args: [accountId] },
         { sql: "DELETE FROM accounts WHERE id = ?", args: [accountId] }
       ],
       "write"
@@ -767,6 +813,68 @@ class TursoRepository implements Repository {
       "write"
     );
     return (await this.getPost(postId))?.assets ?? [];
+  }
+
+  async getInstagramConnection(accountId: string) {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM instagram_connections WHERE account_id = ?",
+      args: [accountId]
+    });
+    const row = result.rows[0];
+    return row ? mapInstagramConnectionRow(row) : null;
+  }
+
+  async saveInstagramConnection(connection: InstagramConnection) {
+    const at = nowIso();
+    await this.client.execute({
+      sql: `INSERT INTO instagram_connections
+              (account_id, ig_user_id, username, access_token, expires_at, connected_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account_id) DO UPDATE SET
+              ig_user_id = excluded.ig_user_id, username = excluded.username,
+              access_token = excluded.access_token, expires_at = excluded.expires_at,
+              updated_at = excluded.updated_at`,
+      args: [connection.accountId, connection.igUserId, connection.username, connection.accessToken, connection.expiresAt, at, at]
+    });
+  }
+
+  async deleteInstagramConnection(accountId: string) {
+    await this.client.execute({ sql: "DELETE FROM instagram_connections WHERE account_id = ?", args: [accountId] });
+  }
+
+  async listInstagramConnectionsExpiringBefore(beforeIso: string) {
+    const result = await this.client.execute({
+      sql: "SELECT * FROM instagram_connections WHERE expires_at < ?",
+      args: [beforeIso]
+    });
+    return result.rows.map(mapInstagramConnectionRow);
+  }
+
+  async listDueScheduledPosts(nowIso: string) {
+    const result = await this.client.execute({
+      sql: `SELECT ${POST_COLUMNS} FROM posts
+            WHERE status = 'scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= ?
+            ORDER BY scheduled_at ASC`,
+      args: [nowIso]
+    });
+    return result.rows.map(mapPostRow);
+  }
+
+  async markPostPublished(postId: string, result: { mediaId: string; permalink: string }) {
+    await this.client.execute({
+      sql: `UPDATE posts SET status = 'published', publish_error = NULL,
+              instagram_media_id = ?, instagram_permalink = ?, updated_at = ? WHERE id = ?`,
+      args: [result.mediaId, result.permalink, nowIso(), postId]
+    });
+    return (await this.getPost(postId))?.post ?? null;
+  }
+
+  async markPostPublishFailed(postId: string, error: string) {
+    await this.client.execute({
+      sql: "UPDATE posts SET status = 'failed', publish_error = ?, updated_at = ? WHERE id = ?",
+      args: [error, nowIso(), postId]
+    });
+    return (await this.getPost(postId))?.post ?? null;
   }
 
   async getCanvaRefreshToken() {
@@ -1274,6 +1382,24 @@ function mapAccountRow(row: Record<string, unknown>): Account {
   };
 }
 
+const POST_COLUMNS = `id, account_id, idea_id, post_type, title, caption, slides_json, hashtags_json,
+  status, generation_status, generation_error, reject_reason, scheduled_at,
+  publish_error, instagram_media_id, instagram_permalink, created_at, updated_at`;
+
+function mapInstagramConnectionRow(row: Record<string, unknown>): InstagramConnection {
+  return {
+    accountId: String(row.account_id),
+    igUserId: String(row.ig_user_id),
+    username: String(row.username ?? ""),
+    accessToken: String(row.access_token),
+    expiresAt: String(row.expires_at)
+  };
+}
+
+function nullableString(value: unknown): string | null {
+  return value == null ? null : String(value);
+}
+
 function mapPostRow(row: Record<string, unknown>): Post {
   const status = String(row.status);
   if (!["draft", "approved", "scheduled", "published", "rejected", "failed"].includes(status)) {
@@ -1301,7 +1427,10 @@ function mapPostRow(row: Record<string, unknown>): Post {
     scheduledAt: row.scheduled_at == null ? null : String(row.scheduled_at),
     generationStatus: generationStatus as Post["generationStatus"],
     generationError: row.generation_error == null ? null : String(row.generation_error),
-    rejectReason: row.reject_reason == null ? null : String(row.reject_reason)
+    rejectReason: row.reject_reason == null ? null : String(row.reject_reason),
+    publishError: nullableString(row.publish_error),
+    instagramMediaId: nullableString(row.instagram_media_id),
+    instagramPermalink: nullableString(row.instagram_permalink)
   };
 }
 

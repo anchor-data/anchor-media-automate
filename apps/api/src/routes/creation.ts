@@ -371,10 +371,12 @@ creationRoutes.post("/posts/:id/schedule", async (c) => {
   const repo = createRepo(c.env);
   const detail = await repo.getPost(c.req.param("id"));
   if (!detail) return c.json({ error: "Post not found" }, 404);
-  if (detail.post.status !== "approved") {
+  // A post whose publish attempt failed can be rescheduled to retry.
+  const retryable = detail.post.status === "failed" && Boolean(detail.post.publishError);
+  if (detail.post.status !== "approved" && !retryable) {
     return c.json({ error: `Only approved posts can be scheduled (is ${detail.post.status})` }, 409);
   }
-  // Persist only; publishing to Instagram is a later phase.
+  // The publish cron picks the post up once scheduledAt has passed.
   await repo.updatePost(detail.post.id, { scheduledAt: parsed.data.scheduledAt });
   const item = await repo.setPostStatus(detail.post.id, "scheduled");
   return c.json({ item, mode: repo.mode });

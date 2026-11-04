@@ -5,5 +5,8 @@ CANVA_CLIENT_ID=
 CANVA_CLIENT_SECRET=
 # Seed only; Canva rotates it, so the live token is stored in the canva_tokens table.
 CANVA_REFRESH_TOKEN=
-INSTAGRAM_ACCESS_TOKEN=
+# Meta app > Instagram API with Instagram Login. Redirect URI to register: https://<host>/api/instagram/callback
+INSTAGRAM_APP_ID=
+INSTAGRAM_APP_SECRET=
+# INSTAGRAM_REDIRECT_URI=
 ALLOWED_ORIGIN=http://localhost:3000

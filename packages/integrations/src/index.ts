@@ -181,35 +181,8 @@ export class MockInstagramClient implements InstagramClient {
   }
 }
 
-export class InstagramGraphClient implements InstagramClient {
-  mode: "instagram" = "instagram";
-  constructor(private accessToken?: string) {}
-  async publishCarousel(input: {
-    accountId: string;
-    caption: string;
-    imageUrls: string[];
-  }): Promise<{ postId: string; permalink: string }> {
-    if (!this.accessToken) {
-      throw new NotConfiguredError("Instagram Graph API");
-    }
-    throw new Error(`Instagram publish is not implemented in v0 for account ${input.accountId}`);
-  }
-  async getInsights(postId: string): Promise<{
-    impressions: number;
-    reach: number;
-    likes: number;
-    comments: number;
-  }> {
-    if (!this.accessToken) {
-      throw new NotConfiguredError("Instagram Graph API");
-    }
-    throw new Error(`Instagram insights is not implemented in v0 for post ${postId}`);
-  }
-}
-
 export type IntegrationOptions = {
   openAiApiKey?: string;
-  instagramAccessToken?: string;
 };
 
 /** Always use live OpenAI Agents path. MockAgentRunner remains for tests only. */
@@ -217,10 +190,16 @@ export function createAgentRunner(options: IntegrationOptions): AgentRunner {
   return new OpenAIAgentsRunner(options.openAiApiKey);
 }
 
-export function createInstagramClient(options: IntegrationOptions): InstagramClient {
-  if (options.instagramAccessToken) {
-    return new InstagramGraphClient(options.instagramAccessToken);
-  }
-  return new MockInstagramClient();
-}
 export { parseInstagramHandle } from "./instagram";
+export {
+  CAROUSEL_MAX_ITEMS,
+  CAROUSEL_MIN_ITEMS,
+  InstagramApiError,
+  buildInstagramAuthorizeUrl,
+  exchangeInstagramCode,
+  publishInstagramCarousel,
+  refreshInstagramToken,
+  type InstagramApp,
+  type InstagramPublishResult,
+  type InstagramTokenGrant
+} from "./instagram-graph";
