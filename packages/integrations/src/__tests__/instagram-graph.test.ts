@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildInstagramAuthorizeUrl,
-  exchangeInstagramCode,
+  connectInstagramToken,
   publishInstagramCarousel,
   refreshInstagramToken
 } from "../instagram-graph";
 
-const app = { appId: "app1", appSecret: "secret1", redirectUri: "https://x.test/api/instagram/callback" };
 const NOW = new Date("2026-11-03T00:00:00.000Z");
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -28,37 +26,28 @@ function fakeGraph(handlers: Array<[RegExp, (call: Call) => Response]>) {
   return { calls, fetchImpl };
 }
 
-describe("buildInstagramAuthorizeUrl", () => {
-  it("asks for the publish scope and carries state", () => {
-    const url = new URL(buildInstagramAuthorizeUrl(app, "st"));
-    expect(url.host).toBe("www.instagram.com");
-    expect(url.searchParams.get("client_id")).toBe("app1");
-    expect(url.searchParams.get("state")).toBe("st");
-    expect(url.searchParams.get("scope")).toContain("instagram_business_content_publish");
-  });
-});
-
-describe("exchangeInstagramCode", () => {
-  it("swaps the code for a long-lived token and reads the profile", async () => {
-    const { calls, fetchImpl } = fakeGraph([
-      [/POST \/oauth\/access_token/, () => json({ data: [{ access_token: "short", user_id: 1 }] })],
-      [/GET \/access_token/, () => json({ access_token: "long", expires_in: 5184000 })],
-      [/GET \/v23\.0\/me/, () => json({ user_id: "178", username: "wakaru" })]
-    ]);
-    const grant = await exchangeInstagramCode(app, "code1", fetchImpl, NOW);
+describe("connectInstagramToken", () => {
+  it("reads the profile for the pasted token", async () => {
+    const { calls, fetchImpl } = fakeGraph([[/GET \/v23\.0\/me/, () => json({ user_id: "178", username: "wakaru" })]]);
+    const grant = await connectInstagramToken("  tok  ", fetchImpl, NOW);
     expect(grant).toEqual({
-      accessToken: "long",
+      accessToken: "tok",
       igUserId: "178",
       username: "wakaru",
-      expiresAt: new Date(NOW.getTime() + 5184000 * 1000).toISOString()
+      expiresAt: new Date(NOW.getTime() + 60 * 24 * 3600 * 1000).toISOString()
     });
-    expect(calls[0]?.params.code).toBe("code1");
-    expect(calls[1]?.params.access_token).toBe("short");
+    expect(calls[0]?.params.access_token).toBe("tok");
   });
 
   it("surfaces Instagram's error message", async () => {
-    const { fetchImpl } = fakeGraph([[/POST/, () => json({ error_message: "Invalid code" }, 400)]]);
-    await expect(exchangeInstagramCode(app, "bad", fetchImpl, NOW)).rejects.toThrow(/Invalid code/);
+    const { fetchImpl } = fakeGraph([[/GET/, () => json({ error: { message: "Invalid OAuth access token" } }, 400)]]);
+    await expect(connectInstagramToken("bad", fetchImpl, NOW)).rejects.toThrow(/Invalid OAuth/);
+  });
+
+  it("rejects an empty token without calling the API", async () => {
+    const { calls, fetchImpl } = fakeGraph([]);
+    await expect(connectInstagramToken("  ", fetchImpl, NOW)).rejects.toThrow(/required/);
+    expect(calls).toHaveLength(0);
   });
 });
 

@@ -9,11 +9,6 @@ export type Bindings = {
   CANVA_CLIENT_SECRET?: string;
   /** Seed only. Once canva_tokens is populated the DB row wins (Canva rotates the token). */
   CANVA_REFRESH_TOKEN?: string;
-  /** Meta app (Instagram API with Instagram Login). Per-account tokens live in instagram_connections. */
-  INSTAGRAM_APP_ID?: string;
-  INSTAGRAM_APP_SECRET?: string;
-  /** Override only when the API is not reachable at <request origin>/api/instagram/callback. */
-  INSTAGRAM_REDIRECT_URI?: string;
   ALLOWED_ORIGIN?: string;
   REFERENCE_FILES?: R2Bucket;
   /** Uploaded slide images placed into Canva autofill image fields. */

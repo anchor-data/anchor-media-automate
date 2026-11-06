@@ -195,11 +195,9 @@ export {
   CAROUSEL_MAX_ITEMS,
   CAROUSEL_MIN_ITEMS,
   InstagramApiError,
-  buildInstagramAuthorizeUrl,
-  exchangeInstagramCode,
+  connectInstagramToken,
   publishInstagramCarousel,
   refreshInstagramToken,
-  type InstagramApp,
   type InstagramPublishResult,
   type InstagramTokenGrant
 } from "./instagram-graph";

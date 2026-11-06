@@ -1,20 +1,16 @@
 /**
  * Instagram API with Instagram Login (graph.instagram.com). One long-lived user token per
  * connected Instagram professional account; tokens last ~60 days and are refreshed before expiry.
+ * Tokens are pasted in from the Meta app dashboard, so no app id / secret is needed here.
  */
 
-export const INSTAGRAM_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize";
-const TOKEN_URL = "https://api.instagram.com/oauth/access_token";
 const GRAPH_URL = "https://graph.instagram.com";
 const GRAPH_VERSION = "v23.0";
-export const INSTAGRAM_SCOPES = ["instagram_business_basic", "instagram_business_content_publish"] as const;
 
 export const CAROUSEL_MIN_ITEMS = 2;
 export const CAROUSEL_MAX_ITEMS = 10;
 const CONTAINER_POLL_INTERVAL_MS = 2000;
 const CONTAINER_POLL_MAX_ATTEMPTS = 30;
-
-export type InstagramApp = { appId: string; appSecret: string; redirectUri: string };
 
 export type InstagramTokenGrant = {
   accessToken: string;
@@ -38,17 +34,6 @@ export class InstagramApiError extends Error {
 
 type Fetch = typeof fetch;
 
-/** URL the user is sent to so they can grant the app access to their Instagram account. */
-export function buildInstagramAuthorizeUrl(app: InstagramApp, state: string): string {
-  const url = new URL(INSTAGRAM_AUTHORIZE_URL);
-  url.searchParams.set("client_id", app.appId);
-  url.searchParams.set("redirect_uri", app.redirectUri);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", INSTAGRAM_SCOPES.join(","));
-  url.searchParams.set("state", state);
-  return url.toString();
-}
-
 async function readJson(response: Response): Promise<Record<string, unknown>> {
   const text = await response.text();
   let body: Record<string, unknown> = {};
@@ -66,55 +51,30 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 }
 
 function expiryFrom(expiresInSeconds: unknown, now: Date): string {
-  const seconds = typeof expiresInSeconds === "number" ? expiresInSeconds : 60 * 24 * 3600 * 60;
+  const seconds = typeof expiresInSeconds === "number" ? expiresInSeconds : 60 * 24 * 3600;
   return new Date(now.getTime() + seconds * 1000).toISOString();
 }
 
-/** Trade the OAuth `code` for a long-lived token and look up the account it belongs to. */
-export async function exchangeInstagramCode(
-  app: InstagramApp,
-  code: string,
+/**
+ * Accept a long-lived access token generated in the Meta app dashboard (Instagram API with
+ * Instagram Login > Generate token) and look up the account it belongs to.
+ */
+export async function connectInstagramToken(
+  accessToken: string,
   fetchImpl: Fetch = fetch,
   now: Date = new Date()
 ): Promise<InstagramTokenGrant> {
-  const shortLived = await readJson(
-    await fetchImpl(TOKEN_URL, {
-      method: "POST",
-      body: new URLSearchParams({
-        client_id: app.appId,
-        client_secret: app.appSecret,
-        grant_type: "authorization_code",
-        redirect_uri: app.redirectUri,
-        code
-      })
-    })
-  );
-  // The endpoint answers either `{access_token, user_id}` or `{data: [{access_token, user_id}]}`.
-  const first = Array.isArray(shortLived.data) ? (shortLived.data[0] as Record<string, unknown>) : shortLived;
-  const shortToken = first?.access_token;
-  if (typeof shortToken !== "string") throw new InstagramApiError("Instagram did not return an access token");
-
-  const longUrl = new URL(`${GRAPH_URL}/access_token`);
-  longUrl.searchParams.set("grant_type", "ig_exchange_token");
-  longUrl.searchParams.set("client_secret", app.appSecret);
-  longUrl.searchParams.set("access_token", shortToken);
-  const long = await readJson(await fetchImpl(longUrl));
-  const accessToken = long.access_token;
-  if (typeof accessToken !== "string") throw new InstagramApiError("Instagram did not return a long-lived token");
-
+  const token = accessToken.trim();
+  if (!token) throw new InstagramApiError("An Instagram access token is required");
   const profileUrl = new URL(`${GRAPH_URL}/${GRAPH_VERSION}/me`);
   profileUrl.searchParams.set("fields", "user_id,username");
-  profileUrl.searchParams.set("access_token", accessToken);
+  profileUrl.searchParams.set("access_token", token);
   const profile = await readJson(await fetchImpl(profileUrl));
-  const igUserId = String(profile.user_id ?? first.user_id ?? "");
+  const igUserId = String(profile.user_id ?? "");
   if (!igUserId) throw new InstagramApiError("Instagram did not return the account id");
-
-  return {
-    accessToken,
-    igUserId,
-    username: String(profile.username ?? ""),
-    expiresAt: expiryFrom(long.expires_in, now)
-  };
+  // Dashboard tokens are long-lived (~60 days) but do not report their expiry; assume the full
+  // window. The cron refreshes tokens near expiry, and a stale token surfaces as a publish error.
+  return { accessToken: token, igUserId, username: String(profile.username ?? ""), expiresAt: expiryFrom(undefined, now) };
 }
 
 /** Extend a long-lived token by another ~60 days. Only works on tokens older than 24 hours. */

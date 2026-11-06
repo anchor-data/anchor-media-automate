@@ -16,15 +16,7 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-const STEPS = ["Instagramでログインして許可", "接続されたアカウントを確認", "ガイドラインとデザインを設定"] as const;
-
-const CALLBACK_ERRORS: Readonly<Record<string, string>> = {
-  denied: "Instagramでの許可がキャンセルされました",
-  invalid_state: "認証の有効期限が切れました。もう一度お試しください",
-  exchange_failed: "Instagramとの連携に失敗しました。プロアカウントか確認してください",
-  not_configured: "Instagramアプリの設定がAPIにありません",
-  account_not_found: "アカウントが見つかりません"
-};
+const STEPS = ["Metaアプリでアクセストークンを生成", "トークンを貼り付けて接続", "ガイドラインとデザインを設定"] as const;
 
 export function AgentAccountsPage() {
   const {
@@ -46,16 +38,7 @@ export function AgentAccountsPage() {
   const instagramConnected = instagram.status.connected;
   const [instagramBusy, setInstagramBusy] = useState(false);
 
-  // Result of the Instagram redirect arrives as ?instagram=connected|error&reason=...
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const result = params.get("instagram");
-    if (!result) return;
-    setTab("instagram");
-    notify(result === "connected" ? "Instagramを連携しました" : (CALLBACK_ERRORS[params.get("reason") ?? ""] ?? "Instagramの連携に失敗しました"));
-    window.history.replaceState(null, "", window.location.pathname);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [instagramToken, setInstagramToken] = useState("");
 
   const runInstagram = async (action: () => Promise<void>, failure: string) => {
     setInstagramBusy(true);
@@ -206,6 +189,7 @@ export function AgentAccountsPage() {
                             <li>Instagramがプロアカウント(ビジネス/クリエイター)であること</li>
                             <li>必要な権限は「投稿の公開」と「プロフィールの閲覧」のみです</li>
                             <li>アプリが開発モードの間は、Metaのテスターに追加したアカウントのみ連携できます</li>
+                            <li>Metaアプリの「Instagram API(Instagramログイン)」→「アクセストークンを生成」で取得したトークンを使います</li>
                           </ul>
                         </div>
                       </>
@@ -229,19 +213,31 @@ export function AgentAccountsPage() {
                       連携を解除する
                     </button>
                   ) : (
-                    <button
-                      className="btn primary block"
-                      disabled={!apiReady || !instagram.configured || instagramBusy}
-                      onClick={() => void runInstagram(instagram.connect, "連携を開始できませんでした")}
-                    >
-                      Instagramで認証する
-                    </button>
+                    <>
+                      <input
+                        className="input"
+                        type="password"
+                        autoComplete="off"
+                        placeholder="Instagramアクセストークン"
+                        value={instagramToken}
+                        onChange={(event) => setInstagramToken(event.target.value)}
+                      />
+                      <button
+                        className="btn primary block"
+                        disabled={!apiReady || !instagramToken.trim() || instagramBusy}
+                        onClick={() =>
+                          void runInstagram(async () => {
+                            await instagram.connect(instagramToken);
+                            setInstagramToken("");
+                            notify("Instagramを連携しました");
+                          }, "連携に失敗しました。トークンとプロアカウントを確認してください")
+                        }
+                      >
+                        トークンで連携する
+                      </button>
+                    </>
                   )}
-                  {apiReady && !instagram.configured && !instagram.loading ? (
-                    <p className="muted small center">APIに INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET が設定されていません</p>
-                  ) : (
-                    <p className="muted small center">パスワードはこのシステムに保存されません。認証はいつでも取り消せます。</p>
-                  )}
+                  <p className="muted small center">トークンはAPI側にのみ保存され、画面には再表示されません。連携はいつでも解除できます。</p>
                 </div>
               ) : null}
             </div>
