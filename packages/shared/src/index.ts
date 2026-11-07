@@ -72,11 +72,17 @@ export const postSchema = z.object({
 });
 export type Post = z.infer<typeof postSchema>;
 
+/** Which Meta API a token belongs to: Instagram Login (IGAA…) or Unified/Facebook login (EAA…). */
+export const instagramProviderSchema = z.enum(["instagram_login", "facebook_login"]);
+export type InstagramProvider = z.infer<typeof instagramProviderSchema>;
+
 /** What the dashboard may know about an account's Instagram link. Never includes the token. */
 export const instagramConnectionStatusSchema = z.object({
   connected: z.boolean(),
   username: z.string().optional(),
-  expiresAt: z.string().optional()
+  provider: instagramProviderSchema.optional(),
+  /** ISO timestamp the token stops working; null means the token does not expire. */
+  expiresAt: z.string().nullable().optional()
 });
 export type InstagramConnectionStatus = z.infer<typeof instagramConnectionStatusSchema>;
 

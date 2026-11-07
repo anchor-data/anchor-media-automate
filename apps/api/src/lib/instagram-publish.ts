@@ -38,7 +38,7 @@ export async function publishPost(env: Bindings, repo: Repository, postId: strin
     if (!detail) throw new Error("Post not found");
     const connection = await repo.getInstagramConnection(detail.post.accountId);
     if (!connection) throw new Error("Instagram is not connected for this account");
-    if (new Date(connection.expiresAt).getTime() <= Date.now()) {
+    if (connection.expiresAt !== null && new Date(connection.expiresAt).getTime() <= Date.now()) {
       throw new Error("The Instagram connection has expired. Reconnect the account.");
     }
     const imageUrls = await resolveImageUrls(env, repo, detail.assets);
@@ -48,6 +48,7 @@ export async function publishPost(env: Bindings, repo: Repository, postId: strin
     const result = await publishInstagramCarousel({
       igUserId: connection.igUserId,
       accessToken: connection.accessToken,
+      provider: connection.provider,
       caption,
       imageUrls
     });
@@ -76,6 +77,7 @@ export async function refreshExpiringTokens(env: Bindings, now: Date = new Date(
   const expiring = await repo.listInstagramConnectionsExpiringBefore(new Date(now.getTime() + REFRESH_WINDOW_MS).toISOString());
   const failed: string[] = [];
   for (const connection of expiring) {
+    if (connection.provider !== "instagram_login") continue;
     try {
       const refreshed = await refreshInstagramToken(connection.accessToken, fetch, now);
       await repo.saveInstagramConnection({ ...connection, ...refreshed });

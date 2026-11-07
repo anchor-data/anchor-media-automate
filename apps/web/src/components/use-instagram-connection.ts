@@ -2,23 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { InstagramConnectionStatus } from "@ama/shared";
-import { disconnectInstagram, getInstagramStatus, startInstagramConnect } from "../lib/api";
+import { connectInstagram, disconnectInstagram, getInstagramStatus } from "../lib/api";
 
 const DISCONNECTED: InstagramConnectionStatus = { connected: false };
 
 export interface InstagramConnectionState {
   readonly status: InstagramConnectionStatus;
-  /** False when the API has no Meta app credentials, so connecting can't work yet. */
-  readonly configured: boolean;
   readonly loading: boolean;
-  readonly connect: () => Promise<void>;
+  readonly connect: (accessToken: string, igUserId?: string) => Promise<void>;
   readonly disconnect: () => Promise<void>;
 }
 
-/** Instagram link of one account: loads its status and starts / removes the connection. */
+/** Instagram link of one account: loads its status and connects with a token / removes the connection. */
 export function useInstagramConnection(accountId: string | null, enabled: boolean): InstagramConnectionState {
   const [status, setStatus] = useState<InstagramConnectionStatus>(DISCONNECTED);
-  const [configured, setConfigured] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -29,7 +26,6 @@ export function useInstagramConnection(accountId: string | null, enabled: boolea
       .then((res) => {
         if (cancelled) return;
         setStatus(res.item);
-        setConfigured(res.configured);
       })
       .catch(() => {
         if (!cancelled) setStatus(DISCONNECTED);
@@ -42,11 +38,14 @@ export function useInstagramConnection(accountId: string | null, enabled: boolea
     };
   }, [accountId, enabled]);
 
-  const connect = useCallback(async () => {
-    if (!accountId) return;
-    const { url } = await startInstagramConnect(accountId);
-    window.location.assign(url);
-  }, [accountId]);
+  const connect = useCallback(
+    async (accessToken: string, igUserId?: string) => {
+      if (!accountId) return;
+      const { item } = await connectInstagram(accountId, accessToken, igUserId);
+      setStatus(item);
+    },
+    [accountId]
+  );
 
   const disconnect = useCallback(async () => {
     if (!accountId) return;
@@ -54,5 +53,5 @@ export function useInstagramConnection(accountId: string | null, enabled: boolea
     setStatus(DISCONNECTED);
   }, [accountId]);
 
-  return { status, configured, loading, connect, disconnect };
+  return { status, loading, connect, disconnect };
 }

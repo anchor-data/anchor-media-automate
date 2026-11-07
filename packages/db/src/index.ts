@@ -10,6 +10,7 @@ import type {
   IdeaStatus,
   ImageAsset,
   ImageAssetCreate,
+  InstagramProvider,
   Job,
   MemoryItem,
   MemoryKind,
@@ -48,7 +49,9 @@ export type InstagramConnection = {
   igUserId: string;
   username: string;
   accessToken: string;
-  expiresAt: string;
+  provider: InstagramProvider;
+  /** ISO timestamp the token stops working; null for tokens that never expire. */
+  expiresAt: string | null;
 };
 
 export interface Repository {
@@ -332,7 +335,9 @@ class MockRepository implements Repository {
     this.instagramConnections.delete(accountId);
   }
   async listInstagramConnectionsExpiringBefore(beforeIso: string) {
-    return [...this.instagramConnections.values()].filter((c) => c.expiresAt < beforeIso);
+    return [...this.instagramConnections.values()].filter(
+      (c) => c.provider === "instagram_login" && c.expiresAt !== null && c.expiresAt !== "" && c.expiresAt < beforeIso
+    );
   }
   async listDueScheduledPosts(nowIso: string) {
     return this.posts.filter((p) => p.status === "scheduled" && p.scheduledAt != null && p.scheduledAt <= nowIso);
@@ -828,13 +833,18 @@ class TursoRepository implements Repository {
     const at = nowIso();
     await this.client.execute({
       sql: `INSERT INTO instagram_connections
-              (account_id, ig_user_id, username, access_token, expires_at, connected_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+              (account_id, ig_user_id, username, access_token, expires_at, provider, connected_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(account_id) DO UPDATE SET
               ig_user_id = excluded.ig_user_id, username = excluded.username,
               access_token = excluded.access_token, expires_at = excluded.expires_at,
-              updated_at = excluded.updated_at`,
-      args: [connection.accountId, connection.igUserId, connection.username, connection.accessToken, connection.expiresAt, at, at]
+              provider = excluded.provider, updated_at = excluded.updated_at`,
+      args: [connection.accountId, connection.igUserId, connection.username, connection.accessToken,
+        connection.expiresAt ?? "",
+        connection.provider,
+        at,
+        at
+      ]
     });
   }
 
@@ -844,7 +854,7 @@ class TursoRepository implements Repository {
 
   async listInstagramConnectionsExpiringBefore(beforeIso: string) {
     const result = await this.client.execute({
-      sql: "SELECT * FROM instagram_connections WHERE expires_at < ?",
+      sql: "SELECT * FROM instagram_connections WHERE provider = 'instagram_login' AND expires_at <> '' AND expires_at < ?",
       args: [beforeIso]
     });
     return result.rows.map(mapInstagramConnectionRow);
@@ -1392,7 +1402,8 @@ function mapInstagramConnectionRow(row: Record<string, unknown>): InstagramConne
     igUserId: String(row.ig_user_id),
     username: String(row.username ?? ""),
     accessToken: String(row.access_token),
-    expiresAt: String(row.expires_at)
+    provider: row.provider === "facebook_login" ? "facebook_login" : "instagram_login",
+    expiresAt: row.expires_at == null || String(row.expires_at) === "" ? null : String(row.expires_at)
   };
 }
 

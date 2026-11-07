@@ -25,6 +25,8 @@ const POST_COLUMN_MIGRATIONS = [
   "instagram_permalink TEXT"
 ] as const;
 
+const INSTAGRAM_CONNECTION_COLUMN_MIGRATIONS = ["provider TEXT NOT NULL DEFAULT 'instagram_login'"] as const;
+
 async function main() {
   await loadRootEnv();
   const url = process.env.TURSO_DATABASE_URL;
@@ -65,6 +67,14 @@ async function main() {
   for (const column of POST_COLUMN_MIGRATIONS) {
     try {
       await client.execute(`ALTER TABLE posts ADD COLUMN ${column}`);
+    } catch (error) {
+      if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error;
+    }
+  }
+
+  for (const column of INSTAGRAM_CONNECTION_COLUMN_MIGRATIONS) {
+    try {
+      await client.execute(`ALTER TABLE instagram_connections ADD COLUMN ${column}`);
     } catch (error) {
       if (!(error instanceof Error) || !/duplicate column/i.test(error.message)) throw error;
     }

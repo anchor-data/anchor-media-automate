@@ -189,12 +189,16 @@ export async function putAutoRun(accountId: string, body: AutoRunSettings) {
 }
 
 export async function getInstagramStatus(accountId: string) {
-  return request<{ item: InstagramConnectionStatus; configured: boolean }>(`/accounts/${accountId}/instagram`);
+  return request<{ item: InstagramConnectionStatus }>(`/accounts/${accountId}/instagram`);
 }
 
-/** Url on instagram.com where the account owner grants access. */
-export async function startInstagramConnect(accountId: string) {
-  return request<{ url: string }>(`/accounts/${accountId}/instagram/connect`, { method: "POST" });
+/** Connect with an access token (EAA… Unified login or IGAA… Instagram login) from the Meta app dashboard. */
+export async function connectInstagram(accountId: string, accessToken: string, igUserId?: string) {
+  return request<{ item: InstagramConnectionStatus }>(`/accounts/${accountId}/instagram/connect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accessToken, ...(igUserId ? { igUserId } : {}) })
+  });
 }
 
 export async function disconnectInstagram(accountId: string) {

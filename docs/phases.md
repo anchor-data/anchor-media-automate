@@ -182,6 +182,10 @@ Detail: [`features/design.md`](./features/design.md), [`features/onboarding.md`]
 
 ## Instagram connect + scheduled publish
 
-- Per-account OAuth via *Instagram API with Instagram Login* (`/api/accounts/:id/instagram/connect` → `/api/instagram/callback`). Long-lived token stored in `instagram_connections`, refreshed by the cron within 14 days of expiry.
+- Per-account connection by pasting an access token (`POST /api/accounts/:id/instagram/connect` with `{accessToken, igUserId?}`). No app id / secret needed. The provider is detected from the token prefix:
+  - `EAA…` → **Unified login** (system user token, `graph.facebook.com/v26.0`). Never expires; the IG account comes from `me/assigned_instagram_accounts`, or from the optional `igUserId` when none/several are assigned. Not refreshed.
+  - otherwise → **Instagram Login** (`IGAA…`, `graph.instagram.com/v23.0`). ~60 day token stored in `instagram_connections`, refreshed by the cron within 14 days of expiry.
+  - `expires_at = ''` in the DB means "never expires" (read back as `null`).
 - `POST /posts/:id/schedule` stores the time; the `*/10 * * * *` cron publishes due posts as a carousel (2-10 images) and records `instagram_media_id` / `instagram_permalink`, or `publish_error` with status `failed` (reschedule to retry).
-- Setup: create a Meta app, add the Instagram product, register redirect URI `https://<host>/api/instagram/callback`, set `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET`, run `pnpm --filter @ama/db setup:turso` to add the new table/columns. `instagram_business_content_publish` needs App Review before non-tester accounts can connect.
+- Setup (Instagram Login): create a Meta app, add the Instagram product, add the Instagram account as a tester, generate its access token in the dashboard and paste it on the Agent accounts page, then run `pnpm --filter @ama/db setup:turso` to add the new table/columns. `instagram_business_content_publish` needs App Review before non-tester accounts can connect.
+- Setup (Unified login): issue a system user token (`instagram_basic`, `instagram_content_publish`, …) with the IG account assigned to the system user, paste it on the Agent accounts page (add the IG user id under 詳細設定 if needed). "Require app secret" must be OFF on the Meta app (no `appsecret_proof` support yet). Run `pnpm --filter @ama/db setup:turso` to add the `provider` column.

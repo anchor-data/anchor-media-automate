@@ -16,15 +16,7 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-const STEPS = ["Instagramでログインして許可", "接続されたアカウントを確認", "ガイドラインとデザインを設定"] as const;
-
-const CALLBACK_ERRORS: Readonly<Record<string, string>> = {
-  denied: "Instagramでの許可がキャンセルされました",
-  invalid_state: "認証の有効期限が切れました。もう一度お試しください",
-  exchange_failed: "Instagramとの連携に失敗しました。プロアカウントか確認してください",
-  not_configured: "Instagramアプリの設定がAPIにありません",
-  account_not_found: "アカウントが見つかりません"
-};
+const STEPS = ["Metaアプリでアクセストークンを発行", "トークンを貼り付けて接続", "ガイドラインとデザインを設定"] as const;
 
 export function AgentAccountsPage() {
   const {
@@ -46,16 +38,8 @@ export function AgentAccountsPage() {
   const instagramConnected = instagram.status.connected;
   const [instagramBusy, setInstagramBusy] = useState(false);
 
-  // Result of the Instagram redirect arrives as ?instagram=connected|error&reason=...
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const result = params.get("instagram");
-    if (!result) return;
-    setTab("instagram");
-    notify(result === "connected" ? "Instagramを連携しました" : (CALLBACK_ERRORS[params.get("reason") ?? ""] ?? "Instagramの連携に失敗しました"));
-    window.history.replaceState(null, "", window.location.pathname);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [instagramToken, setInstagramToken] = useState("");
+  const [instagramUserId, setInstagramUserId] = useState("");
 
   const runInstagram = async (action: () => Promise<void>, failure: string) => {
     setInstagramBusy(true);
@@ -187,7 +171,9 @@ export function AgentAccountsPage() {
                         <strong>@{instagram.status.username} と接続済み</strong>
                         <p className="small muted">
                           承認済みの投稿は、予約した時刻に自動で投稿されます。
-                          {instagram.status.expiresAt ? ` 認証は ${instagram.status.expiresAt.slice(0, 10)} まで有効で、自動的に更新されます。` : ""}
+                          {instagram.status.expiresAt
+                            ? ` 認証は ${instagram.status.expiresAt.slice(0, 10)} まで有効で、自動的に更新されます。`
+                            : " 認証は無期限です（更新は不要です）。"}
                         </p>
                       </div>
                     ) : (
@@ -206,6 +192,7 @@ export function AgentAccountsPage() {
                             <li>Instagramがプロアカウント(ビジネス/クリエイター)であること</li>
                             <li>必要な権限は「投稿の公開」と「プロフィールの閲覧」のみです</li>
                             <li>アプリが開発モードの間は、Metaのテスターに追加したアカウントのみ連携できます</li>
+                            <li>Metaアプリで発行したアクセストークン（Unified login のシステムユーザートークン、または Instagram ログインのトークン）を使います</li>
                           </ul>
                         </div>
                       </>
@@ -229,19 +216,43 @@ export function AgentAccountsPage() {
                       連携を解除する
                     </button>
                   ) : (
-                    <button
-                      className="btn primary block"
-                      disabled={!apiReady || !instagram.configured || instagramBusy}
-                      onClick={() => void runInstagram(instagram.connect, "連携を開始できませんでした")}
-                    >
-                      Instagramで認証する
-                    </button>
+                    <>
+                      <input
+                        className="input"
+                        type="password"
+                        autoComplete="off"
+                        placeholder="アクセストークン（EAA… / IGAA…）"
+                        value={instagramToken}
+                        onChange={(event) => setInstagramToken(event.target.value)}
+                      />
+                      <details>
+                        <summary className="muted small">詳細設定</summary>
+                        <input
+                          className="input"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          placeholder="IGユーザーID（任意・数字）"
+                          value={instagramUserId}
+                          onChange={(event) => setInstagramUserId(event.target.value)}
+                        />
+                      </details>
+                      <button
+                        className="btn primary block"
+                        disabled={!apiReady || !instagramToken.trim() || instagramBusy}
+                        onClick={() =>
+                          void runInstagram(async () => {
+                            await instagram.connect(instagramToken, instagramUserId.trim() || undefined);
+                            setInstagramToken("");
+                            setInstagramUserId("");
+                            notify("Instagramを連携しました");
+                          }, "連携に失敗しました。トークンとプロアカウントを確認してください")
+                        }
+                      >
+                        トークンで連携する
+                      </button>
+                    </>
                   )}
-                  {apiReady && !instagram.configured && !instagram.loading ? (
-                    <p className="muted small center">APIに INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET が設定されていません</p>
-                  ) : (
-                    <p className="muted small center">パスワードはこのシステムに保存されません。認証はいつでも取り消せます。</p>
-                  )}
+                  <p className="muted small center">トークンはAPI側にのみ保存され、画面には再表示されません。連携はいつでも解除できます。</p>
                 </div>
               ) : null}
             </div>

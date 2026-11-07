@@ -39,7 +39,7 @@ app.get("/health", (c) => {
     integrations: {
       openai: Boolean(c.env.OPENAI_API_KEY),
       canva: Boolean(c.env.CANVA_CLIENT_ID && c.env.CANVA_CLIENT_SECRET),
-      instagram: Boolean(c.env.INSTAGRAM_APP_ID && c.env.INSTAGRAM_APP_SECRET)
+      instagram: true
     }
   });
 });

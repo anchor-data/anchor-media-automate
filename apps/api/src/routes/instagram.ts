@@ -1,75 +1,48 @@
 import { Hono } from "hono";
 import type { InstagramConnectionStatus } from "@ama/shared";
-import { buildInstagramAuthorizeUrl, exchangeInstagramCode, type InstagramApp } from "@ama/integrations";
+import { z } from "zod";
+import { connectInstagramToken } from "@ama/integrations";
 import { createRepo, type Bindings } from "../lib/env";
 import { publishPost } from "../lib/instagram-publish";
-import { createInstagramState, verifyInstagramState } from "../lib/instagram-state";
 
 export const instagramRoutes = new Hono<{ Bindings: Bindings }>();
-
-function instagramApp(env: Bindings, requestUrl: string): InstagramApp | null {
-  if (!env.INSTAGRAM_APP_ID || !env.INSTAGRAM_APP_SECRET) return null;
-  return {
-    appId: env.INSTAGRAM_APP_ID,
-    appSecret: env.INSTAGRAM_APP_SECRET,
-    redirectUri: env.INSTAGRAM_REDIRECT_URI ?? `${new URL(requestUrl).origin}/api/instagram/callback`
-  };
-}
-
-/** Where the browser lands after the Instagram redirect. */
-function webRedirect(env: Bindings, result: "connected" | "error", detail?: string): string {
-  const url = new URL("/agent/accounts", env.ALLOWED_ORIGIN ?? "http://localhost:3000");
-  url.searchParams.set("instagram", result);
-  if (detail) url.searchParams.set("reason", detail);
-  return url.toString();
-}
 
 instagramRoutes.get("/accounts/:id/instagram", async (c) => {
   const repo = createRepo(c.env);
   const connection = await repo.getInstagramConnection(c.req.param("id"));
   const item: InstagramConnectionStatus = connection
-    ? { connected: true, username: connection.username, expiresAt: connection.expiresAt }
+    ? { connected: true, username: connection.username, provider: connection.provider, expiresAt: connection.expiresAt }
     : { connected: false };
-  return c.json({ item, configured: Boolean(c.env.INSTAGRAM_APP_ID && c.env.INSTAGRAM_APP_SECRET) });
+  return c.json({ item });
 });
 
-/** Start the Instagram login for one account. The dashboard sends the user to the returned url. */
+const connectBodySchema = z.object({
+  accessToken: z.string().trim().min(1),
+  igUserId: z.string().trim().regex(/^\d+$/).optional()
+});
+
+/** Connect one account with an access token generated in the Meta app dashboard. */
 instagramRoutes.post("/accounts/:id/instagram/connect", async (c) => {
-  const app = instagramApp(c.env, c.req.url);
-  if (!app) return c.json({ error: "Instagram is not configured (INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET)" }, 503);
   const accountId = c.req.param("id");
-  if (!(await createRepo(c.env).getAccount(accountId))) return c.json({ error: "Account not found" }, 404);
-  const state = await createInstagramState(app.appSecret, accountId);
-  return c.json({ url: buildInstagramAuthorizeUrl(app, state) });
-});
-
-/** Instagram redirects here with `code` + `state`; stores the token and sends the user back to the dashboard. */
-instagramRoutes.get("/instagram/callback", async (c) => {
-  const app = instagramApp(c.env, c.req.url);
-  if (!app) return c.redirect(webRedirect(c.env, "error", "not_configured"));
-  const code = c.req.query("code");
-  const state = c.req.query("state");
-  if (c.req.query("error") || !code || !state) return c.redirect(webRedirect(c.env, "error", "denied"));
-
-  const accountId = await verifyInstagramState(app.appSecret, state);
-  if (!accountId) return c.redirect(webRedirect(c.env, "error", "invalid_state"));
-
+  const parsed = connectBodySchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: "accessToken is required (igUserId must be numeric)" }, 400);
   const repo = createRepo(c.env);
-  if (!(await repo.getAccount(accountId))) return c.redirect(webRedirect(c.env, "error", "account_not_found"));
+  if (!(await repo.getAccount(accountId))) return c.json({ error: "Account not found" }, 404);
   try {
-    // Instagram appends "#_" to the code; it is not part of it.
-    const grant = await exchangeInstagramCode(app, code.replace(/#_$/, ""));
+    const grant = await connectInstagramToken(parsed.data.accessToken, { igUserId: parsed.data.igUserId });
     await repo.saveInstagramConnection({
       accountId,
       igUserId: grant.igUserId,
       username: grant.username,
       accessToken: grant.accessToken,
+      provider: grant.provider,
       expiresAt: grant.expiresAt
     });
-    return c.redirect(webRedirect(c.env, "connected"));
+    const item: InstagramConnectionStatus = { connected: true, username: grant.username, provider: grant.provider, expiresAt: grant.expiresAt };
+    return c.json({ item });
   } catch (error) {
     console.error(`instagram connect failed for ${accountId}: ${error instanceof Error ? error.message : error}`);
-    return c.redirect(webRedirect(c.env, "error", "exchange_failed"));
+    return c.json({ error: error instanceof Error ? error.message : "Instagram connection failed" }, 400);
   }
 });
 
