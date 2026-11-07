@@ -168,13 +168,16 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );
 
--- One Instagram link per account. Long-lived token (~60 days), refreshed by the cron.
+-- One Instagram link per account. instagram_login tokens last ~60 days and are refreshed by the
+-- cron; facebook_login (Unified login system user) tokens do not expire. expires_at is NOT NULL
+-- for SQLite migration reasons, so '' means "never expires".
 CREATE TABLE IF NOT EXISTS instagram_connections (
   account_id TEXT PRIMARY KEY REFERENCES accounts(id),
   ig_user_id TEXT NOT NULL,
   username TEXT NOT NULL DEFAULT '',
   access_token TEXT NOT NULL,
   expires_at TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'instagram_login',
   connected_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
   updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 );

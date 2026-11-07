@@ -18,7 +18,7 @@ Design: https://app.paper.design/file/01M5YW2D2RJBNJBQWEV0H6JCBJ/p-1-0
 2. **Creation** — the agent writes the copy for the account's slide structure (3-10 pages, default 8) and may add images (uploaded assets or AI illustrations).
 3. **Design** — each account has a design derived from reference screenshots + a written guideline; every post varies it a little; a post can be redesigned with a prompt.
 4. **Render** — `@ama/renderer` builds a PPTX, Canva imports it (editable there) and exports a PNG per page for the preview.
-5. **Review** — edit, approve (→ memory), schedule. Instagram publishing is not built yet.
+5. **Review** — edit, approve (→ memory), schedule. Approved posts publish to Instagram as carousels (see `docs/phases.md`).
 
 Details: [`docs/features/`](docs/features) (`content-ideation`, `content-creation`, `design`, `onboarding`), [`docs/architecture_v1.md`](docs/architecture_v1.md), [`docs/phases.md`](docs/phases.md).
 
@@ -105,7 +105,7 @@ When both variables are set, API routes use Turso. Otherwise, they use the mock 
 - **OpenAI**: `OPENAI_API_KEY`. Ideation and creation use `@openai/agents` (`gpt-4.1-mini`); design/structure inference use `gpt-4.1` chat completions with images; illustrations use `gpt-image-1-mini` by default. Token usage is converted to USD (`packages/integrations/src/openai-cost.ts`).
 - **Canva Connect**: `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`, `CANVA_REFRESH_TOKEN` (user OAuth; the refresh token rotates and is kept in `canva_tokens`). Scopes: `design:meta:read`, `design:content:read`, `design:content:write`. Canva is used only to import the PPTX and export PNGs; no brand templates or Autofill (so no Enterprise plan is needed). Without credentials a mock client returns placeholder previews.
 - **R2**: `IMAGE_ASSETS` (uploaded assets, AI illustrations), `REFERENCE_FILES`.
-- **Instagram Graph**: mock client only; publishing is not built yet.
+- **Instagram Graph**: connect with a pasted access token (Unified login `EAA…` via graph.facebook.com, or Instagram Login `IGAA…` via graph.instagram.com); carousels are published by the cron.
 
 ## Cost (measured)
 

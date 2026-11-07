@@ -9,7 +9,7 @@ const DISCONNECTED: InstagramConnectionStatus = { connected: false };
 export interface InstagramConnectionState {
   readonly status: InstagramConnectionStatus;
   readonly loading: boolean;
-  readonly connect: (accessToken: string) => Promise<void>;
+  readonly connect: (accessToken: string, igUserId?: string) => Promise<void>;
   readonly disconnect: () => Promise<void>;
 }
 
@@ -39,9 +39,9 @@ export function useInstagramConnection(accountId: string | null, enabled: boolea
   }, [accountId, enabled]);
 
   const connect = useCallback(
-    async (accessToken: string) => {
+    async (accessToken: string, igUserId?: string) => {
       if (!accountId) return;
-      const { item } = await connectInstagram(accountId, accessToken);
+      const { item } = await connectInstagram(accountId, accessToken, igUserId);
       setStatus(item);
     },
     [accountId]

@@ -192,12 +192,12 @@ export async function getInstagramStatus(accountId: string) {
   return request<{ item: InstagramConnectionStatus }>(`/accounts/${accountId}/instagram`);
 }
 
-/** Connect with an access token generated in the Meta app dashboard. */
-export async function connectInstagram(accountId: string, accessToken: string) {
+/** Connect with an access token (EAA… Unified login or IGAA… Instagram login) from the Meta app dashboard. */
+export async function connectInstagram(accountId: string, accessToken: string, igUserId?: string) {
   return request<{ item: InstagramConnectionStatus }>(`/accounts/${accountId}/instagram/connect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ accessToken })
+    body: JSON.stringify({ accessToken, ...(igUserId ? { igUserId } : {}) })
   });
 }
 

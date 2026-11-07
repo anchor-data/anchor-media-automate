@@ -11,30 +11,34 @@ instagramRoutes.get("/accounts/:id/instagram", async (c) => {
   const repo = createRepo(c.env);
   const connection = await repo.getInstagramConnection(c.req.param("id"));
   const item: InstagramConnectionStatus = connection
-    ? { connected: true, username: connection.username, expiresAt: connection.expiresAt }
+    ? { connected: true, username: connection.username, provider: connection.provider, expiresAt: connection.expiresAt }
     : { connected: false };
   return c.json({ item });
 });
 
-const connectBodySchema = z.object({ accessToken: z.string().trim().min(1) });
+const connectBodySchema = z.object({
+  accessToken: z.string().trim().min(1),
+  igUserId: z.string().trim().regex(/^\d+$/).optional()
+});
 
 /** Connect one account with an access token generated in the Meta app dashboard. */
 instagramRoutes.post("/accounts/:id/instagram/connect", async (c) => {
   const accountId = c.req.param("id");
   const parsed = connectBodySchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: "accessToken is required" }, 400);
+  if (!parsed.success) return c.json({ error: "accessToken is required (igUserId must be numeric)" }, 400);
   const repo = createRepo(c.env);
   if (!(await repo.getAccount(accountId))) return c.json({ error: "Account not found" }, 404);
   try {
-    const grant = await connectInstagramToken(parsed.data.accessToken);
+    const grant = await connectInstagramToken(parsed.data.accessToken, { igUserId: parsed.data.igUserId });
     await repo.saveInstagramConnection({
       accountId,
       igUserId: grant.igUserId,
       username: grant.username,
       accessToken: grant.accessToken,
+      provider: grant.provider,
       expiresAt: grant.expiresAt
     });
-    const item: InstagramConnectionStatus = { connected: true, username: grant.username, expiresAt: grant.expiresAt };
+    const item: InstagramConnectionStatus = { connected: true, username: grant.username, provider: grant.provider, expiresAt: grant.expiresAt };
     return c.json({ item });
   } catch (error) {
     console.error(`instagram connect failed for ${accountId}: ${error instanceof Error ? error.message : error}`);

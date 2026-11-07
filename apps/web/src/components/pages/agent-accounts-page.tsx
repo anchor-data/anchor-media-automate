@@ -16,7 +16,7 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-const STEPS = ["Metaアプリでアクセストークンを生成", "トークンを貼り付けて接続", "ガイドラインとデザインを設定"] as const;
+const STEPS = ["Metaアプリでアクセストークンを発行", "トークンを貼り付けて接続", "ガイドラインとデザインを設定"] as const;
 
 export function AgentAccountsPage() {
   const {
@@ -39,6 +39,7 @@ export function AgentAccountsPage() {
   const [instagramBusy, setInstagramBusy] = useState(false);
 
   const [instagramToken, setInstagramToken] = useState("");
+  const [instagramUserId, setInstagramUserId] = useState("");
 
   const runInstagram = async (action: () => Promise<void>, failure: string) => {
     setInstagramBusy(true);
@@ -170,7 +171,9 @@ export function AgentAccountsPage() {
                         <strong>@{instagram.status.username} と接続済み</strong>
                         <p className="small muted">
                           承認済みの投稿は、予約した時刻に自動で投稿されます。
-                          {instagram.status.expiresAt ? ` 認証は ${instagram.status.expiresAt.slice(0, 10)} まで有効で、自動的に更新されます。` : ""}
+                          {instagram.status.expiresAt
+                            ? ` 認証は ${instagram.status.expiresAt.slice(0, 10)} まで有効で、自動的に更新されます。`
+                            : " 認証は無期限です（更新は不要です）。"}
                         </p>
                       </div>
                     ) : (
@@ -189,7 +192,7 @@ export function AgentAccountsPage() {
                             <li>Instagramがプロアカウント(ビジネス/クリエイター)であること</li>
                             <li>必要な権限は「投稿の公開」と「プロフィールの閲覧」のみです</li>
                             <li>アプリが開発モードの間は、Metaのテスターに追加したアカウントのみ連携できます</li>
-                            <li>Metaアプリの「Instagram API(Instagramログイン)」→「アクセストークンを生成」で取得したトークンを使います</li>
+                            <li>Metaアプリで発行したアクセストークン（Unified login のシステムユーザートークン、または Instagram ログインのトークン）を使います</li>
                           </ul>
                         </div>
                       </>
@@ -218,17 +221,29 @@ export function AgentAccountsPage() {
                         className="input"
                         type="password"
                         autoComplete="off"
-                        placeholder="Instagramアクセストークン"
+                        placeholder="アクセストークン（EAA… / IGAA…）"
                         value={instagramToken}
                         onChange={(event) => setInstagramToken(event.target.value)}
                       />
+                      <details>
+                        <summary className="muted small">詳細設定</summary>
+                        <input
+                          className="input"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          placeholder="IGユーザーID（任意・数字）"
+                          value={instagramUserId}
+                          onChange={(event) => setInstagramUserId(event.target.value)}
+                        />
+                      </details>
                       <button
                         className="btn primary block"
                         disabled={!apiReady || !instagramToken.trim() || instagramBusy}
                         onClick={() =>
                           void runInstagram(async () => {
-                            await instagram.connect(instagramToken);
+                            await instagram.connect(instagramToken, instagramUserId.trim() || undefined);
                             setInstagramToken("");
+                            setInstagramUserId("");
                             notify("Instagramを連携しました");
                           }, "連携に失敗しました。トークンとプロアカウントを確認してください")
                         }
