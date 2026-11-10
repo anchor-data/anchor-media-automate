@@ -17,7 +17,7 @@ export function DesignPage() {
   const [screenshots, setScreenshots] = useState<readonly string[]>([]);
   const { design, busy } = state;
 
-  const canAnalyze = apiReady && busy === null && (screenshots.length > 0 || state.guideline.trim().length > 0);
+  const canAnalyze = apiReady && busy === null && (screenshots.length > 0 || state.referenceUrls.length > 0 || state.guideline.trim().length > 0);
   const structureValid = structureIssues(state.structure).length === 0;
   const structureChanged = design !== null && JSON.stringify(design.structure) !== JSON.stringify(state.structure);
 
@@ -33,6 +33,28 @@ export function DesignPage() {
                 参考アカウントの投稿のスクリーンショットを追加してください(最大{MAX_SCREENSHOTS}枚)。AIが色・太さ・角丸・装飾の雰囲気と、スライドの構成を読み取ります。文章や画像はコピーしません。
               </p>
               <ScreenshotPicker value={screenshots} onChange={setScreenshots} onError={notify} />
+              {state.referenceUrls.length > 0 ? (
+                <div className="stack gap-8">
+                  <span className="muted small">保存済みの参考画像(「デザインを作り直す」でも使われます)</span>
+                  <div className="row gap-8" style={{ flexWrap: "wrap" }}>
+                    {state.referenceUrls.map(({ name, url }, index) => (
+                      <span key={name} style={{ position: "relative" }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- served by the API */}
+                        <img src={url} alt={`保存済みの参考画像 ${index + 1}`} width={72} style={{ borderRadius: 6, display: "block" }} />
+                        <button
+                          className="icon-btn"
+                          aria-label="この画像を削除"
+                          disabled={busy !== null}
+                          style={{ position: "absolute", top: -6, right: -6 }}
+                          onClick={() => void state.removeReference(name)}
+                        >
+                          <Icon name="x" size={12} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <input className="input" placeholder="参考アカウント (@handle または instagram.com/…) — メモとして保存します" value={state.referenceNote} onChange={(e) => state.setReferenceNote(e.target.value)} />
               <p className="muted small" style={{ margin: 0 }}>Instagram のリンクからは画像を取得しません。リンクは出典メモとして保存されるだけです。</p>
             </div>

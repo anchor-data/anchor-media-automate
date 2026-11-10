@@ -68,6 +68,8 @@ export interface Repository {
   updateAccountAutoRun(accountId: string, settings: AutoRunSettings): Promise<Account | null>;
   updateAccountImageStyle(accountId: string, imageStylePrompt: string): Promise<Account | null>;
   updateAccountDesign(accountId: string, design: AccountDesign): Promise<Account | null>;
+  /** Keep the account's handle in step with its connected Instagram username. */
+  updateAccountHandle(accountId: string, instagramHandle: string): Promise<Account | null>;
   markAutoRun(accountId: string, at: string): Promise<void>;
   createPostDraft(input: DraftInput): Promise<{ post: Post; assets: PostAsset[] }>;
   updatePost(
@@ -202,6 +204,13 @@ class MockRepository implements Repository {
     const index = this.accounts.findIndex((a) => a.id === accountId);
     if (index < 0) return null;
     const updated = { ...this.accounts[index]!, imageStylePrompt };
+    this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
+    return updated;
+  }
+  async updateAccountHandle(accountId: string, instagramHandle: string) {
+    const index = this.accounts.findIndex((a) => a.id === accountId);
+    if (index < 0) return null;
+    const updated = { ...this.accounts[index]!, instagramHandle };
     this.accounts = this.accounts.map((a, i) => (i === index ? updated : a));
     return updated;
   }
@@ -634,6 +643,14 @@ class TursoRepository implements Repository {
   }
 
 
+
+  async updateAccountHandle(accountId: string, instagramHandle: string) {
+    await this.client.execute({
+      sql: "UPDATE accounts SET instagram_handle = ?, updated_at = ? WHERE id = ?",
+      args: [instagramHandle, nowIso(), accountId]
+    });
+    return this.getAccount(accountId);
+  }
 
   async updateAccountDesign(accountId: string, design: AccountDesign) {
     await this.client.execute({

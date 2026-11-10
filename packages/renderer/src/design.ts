@@ -11,8 +11,8 @@ export interface ReferenceInput {
 
 /** Prompt for turning reference screenshots + a written guideline into a full design. */
 export function buildReferencePrompt({ guideline, referenceNote }: ReferenceInput): string {
-  return `You design the look of an Instagram carousel account (1080x1350 pages, Japanese copy). The attached images are reference posts to take inspiration from: capture their color palette, type weight, density, corner roundness, decoration and layout feel, but do not copy any text, characters or logos.
-${referenceNote?.trim() ? `\nReference source: ${referenceNote.trim()}` : ""}${guideline?.trim() ? `\n\nWritten design guideline from the account owner (it takes priority over the references):\n${guideline.trim()}` : ""}
+  return `You design the look of an Instagram carousel account (1080x1350 pages, Japanese copy). The attached images are the reference posts the new design must follow. The references are the primary source of the look: reproduce their actual color palette (read the real background, panel, heading, accent and bar colors from the pixels, do not substitute a generic palette), type weight, density, corner roundness, decoration and page layout as closely as the fields below allow. Never copy any text, characters, illustrations or logos.
+${referenceNote?.trim() ? `\nReference source: ${referenceNote.trim()}` : ""}${guideline?.trim() ? `\n\nWritten guideline from the account owner. It adds to the references: use it for things the images do not show and for explicit rules (things to avoid, tone). Where it conflicts with the references on colors, layout or decoration, follow the references:\n${guideline.trim()}` : ""}
 
 Return ONLY a JSON object:
 {
@@ -56,7 +56,7 @@ export async function requestDesignFromReferences(
           role: "user",
           content: [
             { type: "text", text: buildReferencePrompt(input) },
-            ...input.images.map((url) => ({ type: "image_url", image_url: { url, detail: "auto" } }))
+            ...input.images.map((url) => ({ type: "image_url", image_url: { url, detail: "high" } }))
           ]
         }
       ]

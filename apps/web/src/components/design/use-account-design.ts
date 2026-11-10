@@ -6,6 +6,9 @@ import { useWorkspace } from "../workspace-context";
 import {
   analyzeAccountDesign,
   analyzeAccountStructure,
+  deleteDesignReference,
+  designReferenceUrl,
+  listDesignReferences,
   getAccountDesign,
   saveAccountDesignNotes,
   saveAccountStructure,
@@ -29,6 +32,22 @@ export function useAccountDesign(accountId: string) {
   const [referenceNote, setReferenceNote] = useState("");
   const [structure, setStructure] = useState<SlideRole[]>([]);
   const [busy, setBusy] = useState<DesignBusy>(null);
+  const [referenceUrls, setReferenceUrls] = useState<ReadonlyArray<{ name: string; url: string }>>([]);
+
+  const loadReferences = useCallback(async () => {
+    if (!apiReady || !accountId) return;
+    try {
+      const { items } = await listDesignReferences(accountId);
+      setReferenceUrls(items.map(({ name }) => ({ name, url: designReferenceUrl(accountId, name) })));
+    } catch {
+      setReferenceUrls([]);
+    }
+  }, [accountId, apiReady]);
+
+  useEffect(() => {
+    setReferenceUrls([]);
+    void loadReferences();
+  }, [loadReferences]);
 
   const adopt = useCallback((next: AccountDesignView) => {
     setDesign(next);
@@ -80,8 +99,21 @@ export function useAccountDesign(accountId: string) {
     setStructure,
     busy,
     /** Derive the look from the screenshots + guideline. */
-    analyze: (screenshots: readonly string[]) =>
-      run("analyze", () => analyzeAccountDesign(accountId, { screenshots: [...screenshots], guideline, referenceNote }), "デザインを作成しました。以降の投稿に反映されます", "デザインを作成できませんでした"),
+    analyze: async (screenshots: readonly string[]) => {
+      const ok = await run("analyze", () => analyzeAccountDesign(accountId, { screenshots: [...screenshots], guideline, referenceNote }), "デザインを作成しました。以降の投稿に反映されます", "デザインを作成できませんでした");
+      if (ok) await loadReferences();
+      return ok;
+    },
+    /** Screenshots the current design was derived from. */
+    referenceUrls,
+    removeReference: async (name: string) => {
+      try {
+        await deleteDesignReference(accountId, name);
+        setReferenceUrls((current) => current.filter((item) => item.name !== name));
+      } catch (error) {
+        notify(errorText(error, "画像を削除できませんでした"));
+      }
+    },
     /** Save the guideline and reference note only. */
     saveNotes: () => run("save", () => saveAccountDesignNotes(accountId, { guideline, referenceNote }), "ガイドラインを保存しました", "保存に失敗しました"),
     /** Infer the page structure from the screenshots. */

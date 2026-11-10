@@ -263,6 +263,18 @@ export async function analyzeAccountDesign(
   return request<{ design: AccountDesignView }>(`/accounts/${accountId}/design/analyze`, { method: "POST", body: JSON.stringify(body) });
 }
 
+/** Screenshots the current design was derived from. `enabled` is false when the API has no image storage. */
+export async function listDesignReferences(accountId: string) {
+  return request<{ items: Array<{ name: string }>; enabled: boolean }>(`/accounts/${accountId}/design/references`);
+}
+
+export async function deleteDesignReference(accountId: string, name: string) {
+  return request<{ ok: boolean }>(`/accounts/${accountId}/design/references/${encodeURIComponent(name)}`, { method: "DELETE" });
+}
+
+export const designReferenceUrl = (accountId: string, name: string) =>
+  `${API_BASE_URL}/accounts/${accountId}/design/references/${encodeURIComponent(name)}`;
+
 /** `reexport` refreshes the previews from the stored Canva design (including edits made in Canva) without re-importing. */
 export async function renderPost(postId: string, reexport: boolean) {
   return request<PostDetail>(`/posts/${postId}/render`, {

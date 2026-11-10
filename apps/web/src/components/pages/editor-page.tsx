@@ -13,6 +13,7 @@ import { canvaDesignUrl } from "../../lib/canva";
 import { totalCost } from "@ama/shared";
 import type { MockPost } from "../../lib/mock-data";
 import { STAGE_LABEL, stageOf } from "../../lib/post-stage";
+import { useExpiredPreviewRefresh } from "../use-expired-preview-refresh";
 import { formatWaiting } from "../../lib/schedule";
 import { limitOf, slideDefs, slideHeadline, type SlideFieldKey } from "../../lib/slides";
 
@@ -42,6 +43,7 @@ function EditorBody({ post }: { post: MockPost }) {
   const [saving, setSaving] = useState(false);
   const [regen, setRegen] = useState<"all" | "slide" | null>(null);
   /** Page being regenerated on its own; the other pages keep showing their current image. */
+  const refreshExpiredPreview = useExpiredPreviewRefresh(post.id);
   const [singlePage, setSinglePage] = useState<number | null>(null);
 
   // Server copy arrives after generation or re-render; adopt it unless the user is mid-edit.
@@ -142,6 +144,7 @@ function EditorBody({ post }: { post: MockPost }) {
               key={slide.index}
               index={i}
               url={post.assetUrls?.[i]}
+              onImageError={refreshExpiredPreview}
               active={i === active}
               onSelect={() => setActive(i)}
             />
@@ -170,7 +173,7 @@ function EditorBody({ post }: { post: MockPost }) {
             ) : previewUrl ? (
               <div className="preview">
                 {/* eslint-disable-next-line @next/next/no-img-element -- signed Canva CDN URLs, not optimizable */}
-                <img src={previewUrl} alt={`スライド ${active + 1}`} />
+                <img src={previewUrl} alt={`スライド ${active + 1}`} onError={refreshExpiredPreview} />
               </div>
             ) : (
               <div className={`preview text-preview ${active === 0 ? "dark" : active === 7 ? "accent" : "light"}`}>

@@ -108,6 +108,8 @@ interface WorkspaceValue {
   savePostSlides: (id: string, slides: SlideFields) => Promise<void>;
   /** Remembers an account's page structure after it was saved on the server. */
   setAccountStructure: (accountId: string, structure: readonly SlideRole[]) => void;
+  /** Follow the connected Instagram username (local state; the API keeps its own copy in step). */
+  setAccountHandle: (accountId: string, handle: string) => void;
   /** Approves and schedules a draft. Resolves true on success. */
   approvePost: (id: string, scheduledIso?: string) => Promise<boolean>;
   /** Re-export the stored Canva design (preview URLs expire). */
@@ -465,6 +467,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setSelectedPostId(null);
         setSelectedIdeaId(null);
       },
+      setAccountHandle: (accountId, handle) =>
+        setAccounts((prev) => {
+          // Returning the same array when nothing changes lets React skip the re-render.
+          if (!prev.some((a) => a.id === accountId && a.handle !== handle)) return prev;
+          return prev.map((a) => (a.id === accountId ? { ...a, handle } : a));
+        }),
       setAccountStructure: (accountId, structure) =>
         setAccounts((prev) => prev.map((a) => (a.id === accountId ? { ...a, structure } : a))),
       saveAutoRun: async (accountId, enabled, schedule) => {

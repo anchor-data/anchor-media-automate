@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { Icon } from "../icon";
 import { MAX_SCREENSHOTS, toScreenshot } from "../../lib/screenshots";
 
@@ -11,21 +11,83 @@ interface ScreenshotPickerProps {
   disabled?: boolean;
 }
 
-/** Reference screenshots (shrunk in the browser before they are sent). */
+function imageFiles(files: Iterable<File>): File[] {
+  return Array.from(files).filter((file) => file.type.startsWith("image/"));
+}
+
+/** Reference screenshots (shrunk in the browser before they are sent). Add by picking, dropping or pasting. */
 export function ScreenshotPicker({ value, onChange, onError, disabled = false }: ScreenshotPickerProps) {
-  const add = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files ?? []).slice(0, MAX_SCREENSHOTS - value.length);
+  const [dragging, setDragging] = useState(false);
+  // Paste and drop can fire faster than React re-renders, so always append to the latest list.
+  const latest = useRef(value);
+  latest.current = value;
+
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      const room = MAX_SCREENSHOTS - latest.current.length;
+      if (disabled || files.length === 0) return;
+      if (room <= 0) {
+        onError(`画像は最大${MAX_SCREENSHOTS}枚までです`);
+        return;
+      }
+      try {
+        const added = await Promise.all(files.slice(0, room).map(toScreenshot));
+        const next = [...latest.current, ...added].slice(0, MAX_SCREENSHOTS);
+        latest.current = next;
+        onChange(next);
+        if (files.length > room) onError(`画像は最大${MAX_SCREENSHOTS}枚までのため、${room}枚だけ追加しました`);
+      } catch (error) {
+        onError(error instanceof Error ? error.message : "画像を追加できませんでした");
+      }
+    },
+    [disabled, onChange, onError]
+  );
+
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const files = imageFiles(
+        Array.from(event.clipboardData?.items ?? [])
+          .filter((item) => item.kind === "file")
+          .flatMap((item) => item.getAsFile() ?? [])
+      );
+      if (files.length === 0) return; // plain text pastes behave as usual
+      event.preventDefault();
+      void addFiles(files);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [addFiles]);
+
+  const pick = (event: ChangeEvent<HTMLInputElement>) => {
+    const files = imageFiles(event.target.files ?? []);
     event.target.value = "";
-    try {
-      const added = await Promise.all(files.map(toScreenshot));
-      onChange([...value, ...added].slice(0, MAX_SCREENSHOTS));
-    } catch (error) {
-      onError(error instanceof Error ? error.message : "画像を追加できませんでした");
-    }
+    void addFiles(files);
+  };
+
+  const drop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragging(false);
+    void addFiles(imageFiles(Array.from(event.dataTransfer.files)));
   };
 
   return (
-    <div className="row gap-8" style={{ flexWrap: "wrap" }}>
+    <div
+      className="row gap-8"
+      style={{
+        flexWrap: "wrap",
+        padding: 8,
+        borderRadius: 10,
+        border: `1px dashed ${dragging ? "var(--accent, #2f4bbf)" : "var(--border, #d5d9e2)"}`,
+        background: dragging ? "rgba(47, 75, 191, 0.06)" : undefined
+      }}
+      onDragOver={(event) => {
+        if (disabled) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={drop}
+    >
       {value.map((src, index) => (
         <span key={src.slice(-40) + index} style={{ position: "relative" }}>
           {/* eslint-disable-next-line @next/next/no-img-element -- local data URL */}
@@ -45,9 +107,12 @@ export function ScreenshotPicker({ value, onChange, onError, disabled = false }:
         <label className="btn outline sm" style={{ cursor: disabled ? "default" : "pointer" }}>
           <Icon name="upload" size={12} />
           スクリーンショットを追加
-          <input type="file" accept="image/*" multiple hidden disabled={disabled} onChange={(e) => void add(e)} />
+          <input type="file" accept="image/*" multiple hidden disabled={disabled} onChange={pick} />
         </label>
       ) : null}
+      <span className="muted small" style={{ alignSelf: "center" }}>
+        ここにドラッグ&ドロップ、または貼り付け(⌘V / Ctrl+V)でもまとめて追加できます
+      </span>
     </div>
   );
 }

@@ -15,6 +15,13 @@ describe("buildReferencePrompt", () => {
     expect(prompt).toContain("structure");
   });
 
+  it("makes the references the primary source and the guideline a supplement", () => {
+    const prompt = buildReferencePrompt({ guideline: "青系" });
+    expect(prompt).toContain("primary source");
+    expect(prompt).toContain("follow the references");
+    expect(prompt).not.toContain("takes priority over the references");
+  });
+
   it("copes with no guideline", () => {
     expect(buildReferencePrompt({})).toContain("reference");
   });

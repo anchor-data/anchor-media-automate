@@ -11,6 +11,14 @@ import type { Account, AccountDesign } from "@ama/shared";
 import { accountDesignSchema, autoRunSettingsSchema, deckStructureSchema } from "@ama/shared";
 import { z } from "zod";
 import { createRepo, type Bindings } from "../lib/env";
+import {
+  deleteDesignReferences,
+  designReferenceKey,
+  isDesignReferenceName,
+  listDesignReferences,
+  loadDesignReferenceImages,
+  replaceDesignReferences
+} from "../lib/design-references";
 import { imageAssetKey } from "../lib/image-assets";
 
 export const accountRoutes = new Hono<{ Bindings: Bindings }>();
@@ -36,6 +44,7 @@ accountRoutes.delete("/accounts/:id", async (c) => {
   const images = await repo.listImageAssets(id, ["asset", "reference", "generated"]);
   if (!(await repo.deleteAccount(id))) return c.json({ error: "Account not found" }, 404);
   await Promise.all(images.map((image) => c.env.IMAGE_ASSETS?.delete(imageAssetKey(image.id))));
+  if (c.env.IMAGE_ASSETS) await deleteDesignReferences(c.env.IMAGE_ASSETS, id);
   return c.json({ ok: true });
 });
 
@@ -62,6 +71,38 @@ accountRoutes.get("/accounts/:id/design", async (c) => {
   const account = await repo.getAccount(c.req.param("id"));
   if (!account) return c.json({ error: "Account not found" }, 404);
   return c.json({ design: designView(account.design) });
+});
+
+const MAX_DESIGN_REFERENCES = 8;
+
+/** The screenshots the current design was derived from (kept in the image bucket). */
+accountRoutes.get("/accounts/:id/design/references", async (c) => {
+  const bucket = c.env.IMAGE_ASSETS;
+  if (!bucket) return c.json({ items: [], enabled: false });
+  const names = await listDesignReferences(bucket, c.req.param("id"));
+  return c.json({ items: names.map((name) => ({ name })), enabled: true });
+});
+
+accountRoutes.get("/accounts/:id/design/references/:name", async (c) => {
+  const name = c.req.param("name");
+  const bucket = c.env.IMAGE_ASSETS;
+  if (!bucket || !isDesignReferenceName(name)) return c.json({ error: "Image not found" }, 404);
+  const object = await bucket.get(designReferenceKey(c.req.param("id"), name));
+  if (!object) return c.json({ error: "Image not found" }, 404);
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": object.httpMetadata?.contentType ?? "image/jpeg",
+      "Cache-Control": "private, max-age=3600"
+    }
+  });
+});
+
+accountRoutes.delete("/accounts/:id/design/references/:name", async (c) => {
+  const name = c.req.param("name");
+  const bucket = c.env.IMAGE_ASSETS;
+  if (!bucket || !isDesignReferenceName(name)) return c.json({ error: "Image not found" }, 404);
+  await bucket.delete(designReferenceKey(c.req.param("id"), name));
+  return c.json({ ok: true });
 });
 
 /** Reference screenshots: image data URLs or https URLs. */
@@ -111,11 +152,14 @@ accountRoutes.post("/accounts/:id/design/analyze", async (c) => {
   const current = account.design ?? accountDesignSchema.parse({});
   const guideline = parsed.data.guideline ?? current.guideline;
   const referenceNote = parsed.data.referenceNote ?? current.referenceNote;
+  // Saved references stay part of the design: new screenshots are added to them (newest kept, up to 8).
+  const saved = c.env.IMAGE_ASSETS ? await loadDesignReferenceImages(c.env.IMAGE_ASSETS, account.id).catch(() => []) : [];
+  const images = [...saved, ...parsed.data.screenshots].slice(-MAX_DESIGN_REFERENCES);
   let result;
   try {
     result = await requestDesignFromReferences({
       apiKey: c.env.OPENAI_API_KEY,
-      images: parsed.data.screenshots,
+      images,
       guideline,
       referenceNote
     });
@@ -133,6 +177,12 @@ accountRoutes.post("/accounts/:id/design/analyze", async (c) => {
     analysisCostUsd: current.analysisCostUsd + (result.usage ? (chatCostUsd(result.usage.model, result.usage) ?? 0) : 0)
   };
   const updated = await repo.updateAccountDesign(account.id, design);
+  // Remember what this design was based on so the page can show it. Best effort: the design is already saved.
+  if (c.env.IMAGE_ASSETS && parsed.data.screenshots.length > 0) {
+    await replaceDesignReferences(c.env.IMAGE_ASSETS, account.id, images).catch((error: unknown) => {
+      console.error(`could not save design references for ${account.id}: ${error instanceof Error ? error.message : error}`);
+    });
+  }
   return c.json({ design: designView(updated?.design) });
 });
 

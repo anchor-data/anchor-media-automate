@@ -26,6 +26,7 @@ export function AgentAccountsPage() {
     memoryItems,
     apiReady,
     openModal,
+    setAccountHandle,
     saveAutoRun,
     removeMemory,
     notify
@@ -36,6 +37,12 @@ export function AgentAccountsPage() {
 
   const instagram = useInstagramConnection(active?.id ?? null, apiReady);
   const instagramConnected = instagram.status.connected;
+  const connectedUsername = instagram.status.connected ? instagram.status.username : undefined;
+  const activeId = active?.id;
+  // A connected account is named after its Instagram username.
+  useEffect(() => {
+    if (activeId && connectedUsername) setAccountHandle(activeId, `@${connectedUsername}`);
+  }, [activeId, connectedUsername, setAccountHandle]);
   const [instagramBusy, setInstagramBusy] = useState(false);
 
   const [instagramToken, setInstagramToken] = useState("");

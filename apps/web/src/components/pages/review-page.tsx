@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { PageTopbar, Tabs } from "../ui/page";
 import { SlideTile } from "../slide-tile";
+import { useExpiredPreviewRefresh } from "../use-expired-preview-refresh";
 import { useWorkspace } from "../workspace-context";
 import { aiQualityScore } from "../../lib/mock-score";
 import { REVIEW_CHECKS, REVIEW_COMMENTS } from "../../lib/mock-ops";
@@ -49,6 +50,7 @@ export function ReviewPage() {
   const generating = accountPosts.filter((p) => stageOf(p) === "generating");
   const listed = tab === "mine" ? pending : [...pending, ...generating];
   const selected = pending.find((p) => p.id === selectedPostId) ?? pending[0] ?? null;
+  const refreshExpiredPreview = useExpiredPreviewRefresh(selected?.id ?? "");
 
   // Selecting loads the slide images lazily (see WorkspaceProvider).
   useEffect(() => {
@@ -143,6 +145,7 @@ export function ReviewPage() {
                     variant="card"
                     index={i}
                     url={selected.assetUrls?.[i]}
+                    onImageError={refreshExpiredPreview}
                     headline={slideHeadline(selected.slides, i, selected.structure)}
                   />
                 ))}

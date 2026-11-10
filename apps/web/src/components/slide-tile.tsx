@@ -7,6 +7,8 @@ interface SlideTileProps {
   readonly headline?: string;
   readonly active?: boolean;
   readonly onSelect?: () => void;
+  /** The image could not be loaded (e.g. its signed url expired). */
+  readonly onImageError?: () => void;
   readonly variant?: "thumb" | "card";
 }
 
@@ -17,13 +19,13 @@ function toneOf(index: number): "dark" | "light" | "accent" {
   return "light";
 }
 
-export function SlideTile({ index, url, headline, active, onSelect, variant = "thumb" }: SlideTileProps) {
+export function SlideTile({ index, url, headline, active, onSelect, onImageError, variant = "thumb" }: SlideTileProps) {
   const label = String(index + 1).padStart(2, "0");
   const body = (
     <>
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element -- signed Canva CDN URLs, not optimizable
-        <img src={url} alt={`スライド ${index + 1}`} />
+        <img src={url} alt={`スライド ${index + 1}`} onError={onImageError} />
       ) : (
         <span className="slide-tile-text">{variant === "card" ? headline : ""}</span>
       )}
