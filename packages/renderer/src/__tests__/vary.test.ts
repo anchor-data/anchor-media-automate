@@ -56,6 +56,26 @@ describe("varySpec", () => {
     for (let i = 0; i < 30; i++) expect(varySpec(withAlternates, `sub${i}`).layout.structure).toBe(withAlternates.layout.structure);
   });
 
+  it("varies the background artwork per post, within bounds", () => {
+    const specs = Array.from({ length: 40 }, (_, i) => varySpec(withAlternates, `bg${i}`));
+    expect(new Set(specs.map((s) => s.layout.bgVariant)).size).toBeGreaterThan(1);
+    expect(new Set(specs.map((s) => s.layout.bgFlip)).size).toBe(2);
+    for (const s of specs) {
+      expect(s.layout.bgOffset).toBeGreaterThanOrEqual(0.3);
+      expect(s.layout.bgOffset).toBeLessThanOrEqual(0.7);
+    }
+  });
+
+  it("lively uses a wider crop range, and varies corner roundness and number size", () => {
+    const lively = applySpecPatch(withAlternates, { layout: { variety: "lively" } });
+    const specs = Array.from({ length: 60 }, (_, i) => varySpec(lively, `lv${i}`));
+    expect(Math.min(...specs.map((s) => s.layout.bgOffset))).toBeLessThan(0.3);
+    expect(Math.max(...specs.map((s) => s.layout.bgOffset))).toBeGreaterThan(0.7);
+    expect(new Set(specs.map((s) => s.layout.radius)).size).toBeGreaterThan(1);
+    expect(new Set(specs.map((s) => s.type.numScale)).size).toBeGreaterThan(1);
+    for (const s of specs) expect(designSpecSchema.safeParse(s).success).toBe(true);
+  });
+
   it("does not mutate the input", () => {
     const before = JSON.stringify(withAlternates);
     varySpec(withAlternates, "m");

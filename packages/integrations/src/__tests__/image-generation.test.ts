@@ -17,6 +17,36 @@ describe("composeImagePrompt", () => {
   });
 });
 
+describe("generateSlideImage size and format", () => {
+  it("asks for a tall compressed jpeg when told to", async () => {
+    const fetchImpl = vi.fn(async () => ok());
+    const result = await generateSlideImage({
+      apiKey: "k",
+      prompt: "p",
+      references: [{ bytes: new Uint8Array([1]), contentType: "image/png", name: "a.png" }],
+      size: "1024x1536",
+      format: "jpeg",
+      quality: "medium",
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+    const form = call(fetchImpl)[1].body as FormData;
+    expect(form.get("size")).toBe("1024x1536");
+    expect(form.get("output_format")).toBe("jpeg");
+    expect(form.get("output_compression")).toBe("80");
+    expect(form.get("quality")).toBe("medium");
+    expect(result.contentType).toBe("image/jpeg");
+  });
+
+  it("keeps the square png default", async () => {
+    const fetchImpl = vi.fn(async () => ok());
+    await generateSlideImage({ apiKey: "k", prompt: "p", references: [], fetchImpl: fetchImpl as unknown as typeof fetch });
+    const body = JSON.parse(String(call(fetchImpl)[1].body)) as Record<string, string>;
+    expect(body.size).toBe("1024x1024");
+    expect(body.output_format).toBe("png");
+    expect(body.quality).toBeUndefined();
+  });
+});
+
 describe("generateSlideImage", () => {
   it("edits with every reference image and returns the decoded png", async () => {
     const fetchImpl = vi.fn(async () => ok());

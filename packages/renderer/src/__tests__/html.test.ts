@@ -107,3 +107,28 @@ describe("variable structures in the html deck", () => {
     expect((html.match(/data-role="pager-active"/g) ?? []).length).toBe(3);
   });
 });
+
+describe("background artwork in the html preview", () => {
+  const spec = { ...DEFAULT_DESIGN_SPEC, layout: { ...DEFAULT_DESIGN_SPEC.layout, bgFlip: true, bgOffset: 0.8 } };
+  const html = renderSlideHtml({ spec, index: 1, fields: {}, handle: "@a", backgrounds: { cover: ["https://example.com/a.jpg"] } });
+
+  it("covers the page, crops by the focus and mirrors it", () => {
+    expect(html).toContain('src="https://example.com/a.jpg"');
+    expect(html).toContain("object-fit: cover");
+    expect(html).toContain("object-position: 50% 80%");
+    expect(html).toContain("scaleX(-1)");
+  });
+
+  it("makes only the panel fill translucent", () => {
+    expect(html).toMatch(/data-role="frame" style="[^"]*background: rgba\(/);
+    expect(html).toMatch(/data-role="frame" style="[^"]*border: 8px solid #/);
+  });
+});
+
+describe("per-role page background", () => {
+  it("gives each page its role's background color", () => {
+    const spec = applySpecPatch(DEFAULT_DESIGN_SPEC, { roles: { cover: { theme: { bg: "#10231f" } } } });
+    expect(renderSlideHtml({ spec, index: 1, fields, handle: "@a" })).toContain('class="slide" style="background: #10231f"');
+    expect(renderSlideHtml({ spec, index: 3, fields, handle: "@a" })).toContain(`class="slide" style="background: ${DEFAULT_DESIGN_SPEC.theme.bg}"`);
+  });
+});

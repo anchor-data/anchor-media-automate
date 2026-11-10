@@ -13,6 +13,7 @@ export type IconName =
   | "list"
   | "sparkles"
   | "x"
+  | "grip"
   | "image"
   | "lightbulb"
   | "pen-tool"
@@ -164,6 +165,11 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <path d="M7 10l5 5 5-5M12 15V3" />
+    </>
+  ),
+  grip: (
+    <>
+      {[6, 12, 18].flatMap((y) => [9, 15].map((x) => <circle key={`${x}-${y}`} cx={x} cy={y} r={1.3} fill="currentColor" stroke="none" />))}
     </>
   ),
   trash: <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M6 6l1 14a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-14" />,

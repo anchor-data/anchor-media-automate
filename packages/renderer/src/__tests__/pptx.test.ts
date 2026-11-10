@@ -133,3 +133,37 @@ describe("variable structures in the pptx", () => {
     expect(await slideXml(zip, 4)).toContain("フォロー");
   });
 });
+
+describe("background artwork in the pptx", () => {
+  // A PNG header of a 1024x1536 picture: enough for the renderer to read the size.
+  const header = new Uint8Array(24);
+  header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+  new DataView(header.buffer).setUint32(16, 1024);
+  new DataView(header.buffer).setUint32(20, 1536);
+  const ART = `data:image/png;base64,${btoa(String.fromCharCode(...header))}`;
+
+  it("crops the picture to the page and mirrors it when the post's design says so", async () => {
+    const spec = applySpecPatch(DEFAULT_DESIGN_SPEC, { layout: { bgFlip: true, bgOffset: 0.5 } });
+    const bytes = await renderDeckPptx({ spec, fields, handle: "@a", backgrounds: { cover: [ART] } });
+    const xml = await slideXml(await JSZip.loadAsync(bytes), 1);
+    expect(xml).toContain('flipH="1"');
+    expect(xml).toContain('t="8333"');
+    expect(xml).toContain('b="8333"');
+  });
+
+  it("puts the picture only on pages whose role has artwork", async () => {
+    const bytes = await renderDeckPptx({ spec: DEFAULT_DESIGN_SPEC, fields, handle: "@a", backgrounds: { cover: [ART] } });
+    const zip = await JSZip.loadAsync(bytes);
+    expect(await slideXml(zip, 1)).toContain("<p:pic>");
+    expect(await slideXml(zip, 2)).not.toContain("<p:pic>");
+  });
+});
+
+describe("per-role page background in the pptx", () => {
+  it("sets the slide background from the page's role", async () => {
+    const spec = applySpecPatch(DEFAULT_DESIGN_SPEC, { roles: { cover: { theme: { bg: "#10231f" } } } });
+    const zip = await JSZip.loadAsync(await renderDeckPptx({ spec, fields, handle: "@a" }));
+    expect(await slideXml(zip, 1)).toContain("10231F");
+    expect(await slideXml(zip, 2)).not.toContain("10231F");
+  });
+});

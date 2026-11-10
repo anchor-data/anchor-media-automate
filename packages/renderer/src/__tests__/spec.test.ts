@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySpecPatch, contrastRatio, designSpecSchema, DEFAULT_DESIGN_SPEC, ensureReadable } from "../spec";
+import { applySpecPatch, contrastRatio, designSpecSchema, DEFAULT_DESIGN_SPEC, ensureReadable, specForRole } from "../spec";
 
 describe("designSpecSchema", () => {
   it("fills defaults from an empty object", () => {
@@ -64,5 +64,66 @@ describe("ensureReadable", () => {
     const bad = applySpecPatch(DEFAULT_DESIGN_SPEC, { theme: { accent: "#0a2a66", primary: "#0b2c53" } });
     const fixed = ensureReadable(bad);
     expect(contrastRatio(fixed.theme.onAccent, fixed.theme.accent)).toBeGreaterThanOrEqual(4.5);
+  });
+});
+
+describe("ensureReadable surface", () => {
+  const dark = { bg: "#edeef2", card: "#38697c", ink: "#ffffff", primary: "#ffffff", onAccent: "#111111", accent: "#d05c4e", bar: "#bbc7db", onBar: "#212530" };
+
+  it("keeps light text on a dark card even though the page background is light", () => {
+    const spec = ensureReadable(applySpecPatch(DEFAULT_DESIGN_SPEC, { theme: dark, layout: { frame: "filled" } }));
+    expect(spec.theme.ink).toBe("#ffffff");
+    expect(spec.theme.primary).toBe("#ffffff");
+  });
+
+  it("fixes dark text on that card (older saved designs)", () => {
+    const spec = ensureReadable(applySpecPatch(DEFAULT_DESIGN_SPEC, { theme: { ...dark, ink: "#111111", primary: "#212530" } }));
+    expect(spec.theme.ink).toBe("#ffffff");
+    expect(spec.theme.primary).toBe("#ffffff");
+  });
+
+  it("judges against the page background when there is no frame", () => {
+    const spec = ensureReadable(applySpecPatch(DEFAULT_DESIGN_SPEC, { theme: { ...dark, ink: "#111111" }, layout: { frame: "none" } }));
+    expect(spec.theme.ink).toBe("#111111");
+  });
+});
+
+describe("per-role design", () => {
+  const withCover = applySpecPatch(DEFAULT_DESIGN_SPEC, {
+    roles: {
+      cover: { theme: { card: "#1f4d45", ink: "#ffffff", primary: "#ffe27a" }, layout: { decor: "none", frame: "filled" } },
+      bogus: { theme: { card: "#000000" } }
+    }
+  });
+
+  it("keeps only valid roles and fields from a model's patch", () => {
+    expect(Object.keys(withCover.roles)).toEqual(["cover"]);
+    expect(withCover.roles.cover?.theme).toEqual({ card: "#1f4d45", ink: "#ffffff", primary: "#ffe27a" });
+    const bad = applySpecPatch(DEFAULT_DESIGN_SPEC, { roles: { cta: { theme: { card: "not-a-color", ink: "#fff" }, layout: { radius: 999, decor: "dots" } } } });
+    expect(bad.roles.cta).toEqual({ theme: { ink: "#fff" }, layout: { decor: "dots" } });
+  });
+
+  it("does not let a role change the accent", () => {
+    const spec = applySpecPatch(DEFAULT_DESIGN_SPEC, { roles: { cover: { theme: { accent: "#123456" } } } });
+    expect(spec.roles.cover).toBeUndefined();
+  });
+
+  it("draws a role with its overrides and leaves the others alone", () => {
+    expect(specForRole(withCover, "cover").theme.card).toBe("#1f4d45");
+    expect(specForRole(withCover, "cover").layout.decor).toBe("none");
+    expect(specForRole(withCover, "point")).toBe(withCover);
+    expect(specForRole(withCover, null)).toBe(withCover);
+  });
+
+  it("re-checks readability for the role's own colors", () => {
+    const dark = applySpecPatch(DEFAULT_DESIGN_SPEC, { roles: { cover: { theme: { card: "#101820", ink: "#111111", primary: "#222222" }, layout: { frame: "filled" } } } });
+    const cover = specForRole(dark, "cover");
+    expect(contrastRatio(cover.theme.ink, "#101820")).toBeGreaterThanOrEqual(4.5);
+    expect(cover.theme.ink).toBe("#ffffff");
+  });
+
+  it("is stored and read back (older designs have no roles)", () => {
+    expect(designSpecSchema.parse(withCover).roles.cover?.layout?.decor).toBe("none");
+    expect(designSpecSchema.parse({}).roles).toEqual({});
   });
 });

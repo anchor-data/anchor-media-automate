@@ -2,33 +2,34 @@
 
 import { renderSlideHtml, SLIDE_HEIGHT, SLIDE_WIDTH } from "@ama/renderer/src/html";
 import type { DesignSpec } from "@ama/renderer/src/spec";
+import { varySpec } from "@ama/renderer/src/vary";
+import type { SlideRole } from "@ama/shared";
 import type { AccountDesignView } from "../../lib/api";
 import { ROLE_LABEL } from "../../lib/slides";
+import { sampleFieldsFor } from "../../lib/sample-fields";
+import type { BackgroundUrls, SavedReference } from "./use-account-design";
 
-/** Sample copy so the design can be previewed without a post. */
-const SAMPLE_FIELDS: Readonly<Record<string, string>> = {
-  s1_title: "転職で後悔しない3つの準備",
-  s1_sub: "3分でわかる",
-  s2_head: "不安だよね",
-  s2_body: "何から始めればいいか分からないのが普通です。",
-  s3_num: "1",
-  s3_head: "自己分析",
-  s3_body: "得意なことや苦手なことを整理して、次の仕事で大切にしたいことを見つけよう。",
-  s7_label: "まとめ",
-  s7_head: "迷ったら",
-  s7_body: "まずは転職の軸を決めて、気になる求人を比べてみよう。",
-  s8_head: "保存して見返そう",
-  s8_cta: "フォローしてね"
-};
+/** The pages to show: cover, first point and closing page, plus every page a reference was assigned to. */
+function samplePagesFor(structure: readonly SlideRole[], references: readonly SavedReference[]): number[] {
+  const defaults = [1, structure.indexOf("point") + 1, structure.length].filter((page) => page >= 1);
+  const referenced = references.map((reference) => reference.page).filter((page): page is number => page !== null && page <= structure.length);
+  return [...new Set([...defaults, ...referenced])].sort((a, b) => a - b);
+}
 
-function SlidePreview({ spec, index, handle, width }: { spec: DesignSpec; index: number; handle: string; width: number }) {
+/** A content page for the variation examples (variation mostly shows on those). */
+const examplePageOf = (structure: readonly SlideRole[]): number => Math.max(1, structure.indexOf("point") + 1);
+
+/** Fixed seeds so the examples do not jump around between renders. */
+const VARIATION_SEEDS = ["sample-a", "sample-b", "sample-c"] as const;
+
+function SlidePreview({ spec, index, handle, width, backgrounds, structure }: { spec: DesignSpec; index: number; handle: string; width: number; backgrounds?: BackgroundUrls; structure: readonly SlideRole[] }) {
   const scale = width / SLIDE_WIDTH;
   return (
     <div style={{ width, height: SLIDE_HEIGHT * scale, overflow: "hidden", borderRadius: 8, boxShadow: "0 1px 4px rgba(0,0,0,.2)" }}>
       <iframe
         title={`preview ${index}`}
         sandbox=""
-        srcDoc={renderSlideHtml({ spec, index, fields: SAMPLE_FIELDS, handle })}
+        srcDoc={renderSlideHtml({ spec, index, fields: sampleFieldsFor(structure), handle, backgrounds, structure })}
         style={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT, border: 0, transform: `scale(${scale})`, transformOrigin: "top left", pointerEvents: "none" }}
       />
     </div>
@@ -79,11 +80,16 @@ interface DesignSummaryProps {
   handle: string;
   /** Preview width in px of each sample page. */
   previewWidth?: number;
+  /** Background artwork urls by page role; the sample pages are drawn on top of them. */
+  backgrounds?: BackgroundUrls;
+  /** Saved reference screenshots; the ones that name a page are shown next to that page of the sample. */
+  references?: readonly SavedReference[];
 }
 
 /** The saved design at a glance: description, colors, key settings, page structure and sample pages. */
-export function DesignSummary({ design, handle, previewWidth = 220 }: DesignSummaryProps) {
-  const { spec } = design;
+export function DesignSummary({ design, handle, previewWidth = 220, backgrounds, references = [] }: DesignSummaryProps) {
+  const { spec, structure } = design;
+  const samplePages = samplePagesFor(structure, references);
   return (
     <div className="stack gap-16">
       <div>
@@ -99,16 +105,46 @@ export function DesignSummary({ design, handle, previewWidth = 220 }: DesignSumm
         <li>ページの配置: {STRUCTURE_LABEL[spec.layout.structure]}</li>
         <li>番号の位置: {spec.layout.numberAlign} · 見出しの下線: {spec.type.underlineHeads ? "あり" : "なし"}</li>
         <li>投稿ごとの変化: {VARIETY_LABEL[spec.layout.variety]}</li>
+        {Object.keys(spec.roles).length > 0 ? (
+          <li>ページの種類ごとの違い: {(Object.keys(spec.roles) as SlideRole[]).map((role) => ROLE_LABEL[role]).join("・")}(色・枠・装飾などを個別に設定)</li>
+        ) : null}
         <li>
           スライド構成: {design.structure.length}枚 ({design.structure.map((role) => ROLE_LABEL[role]).join(" → ")})
           {design.structureSummary ? <span className="muted"> — {design.structureSummary}</span> : null}
         </li>
       </ul>
-      <div className="row gap-12" style={{ flexWrap: "wrap" }}>
-        {[1, 3, 8].map((index) => (
-          <SlidePreview key={index} spec={spec} index={index} handle={handle} width={previewWidth} />
-        ))}
+      <div className="row gap-12" style={{ flexWrap: "wrap", alignItems: "flex-start" }}>
+        {samplePages.map((page) => {
+          const matching = references.filter((reference) => reference.page === page);
+          return (
+            <div key={page} className="stack gap-4">
+              <span className="muted small">{page}ページ目 · {ROLE_LABEL[structure[page - 1]!]}</span>
+              <div className="row gap-8" style={{ alignItems: "flex-start" }}>
+                {matching.length > 0 ? (
+                  <div className="stack gap-4" title="このページとして指定した参考画像">
+                    {matching.map((reference) => (
+                      // eslint-disable-next-line @next/next/no-img-element -- served by the API
+                      <img key={reference.name} src={reference.url} alt={`${page}ページ目の参考画像`} width={Math.round(previewWidth * 0.45)} style={{ borderRadius: 6, display: "block" }} />
+                    ))}
+                    <span className="muted small">参考</span>
+                  </div>
+                ) : null}
+                <SlidePreview spec={spec} index={page} handle={handle} width={previewWidth} backgrounds={backgrounds} structure={structure} />
+              </div>
+            </div>
+          );
+        })}
       </div>
+      {spec.layout.variety !== "none" ? (
+        <div className="stack gap-8">
+          <span className="muted small">投稿ごとの変化の例(同じデザインから、色・配置・背景を少しずつ変えます)</span>
+          <div className="row gap-12" style={{ flexWrap: "wrap" }}>
+            {VARIATION_SEEDS.map((seed) => (
+              <SlidePreview key={seed} spec={varySpec(spec, seed)} index={examplePageOf(structure)} handle={handle} width={previewWidth} backgrounds={backgrounds} structure={structure} />
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

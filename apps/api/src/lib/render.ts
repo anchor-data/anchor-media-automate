@@ -3,6 +3,7 @@ import { bytesToDataUrl, type CanvaClient } from "@ama/integrations";
 import { PPTX_MIME, renderDeckPptx, resolvePostDesign } from "@ama/renderer";
 import { DEFAULT_STRUCTURE, deckExtrasFrom, parseDeckSlides, slidesJsonWith } from "@ama/shared";
 import type { Post, SlideImage } from "@ama/shared";
+import { loadBackgroundImages } from "./design-backgrounds";
 import { imageAssetKey } from "./image-assets";
 
 /**
@@ -62,7 +63,9 @@ export async function renderPost(
         await repo.updatePost(post.id, { slidesJson: slidesJsonWith(slides.slides, { ...extras, design, structure: slides.structure }) });
       }
       const images = await loadImageData(repo, options.imageBucket, extras.images);
-      const pptx = await renderDeckPptx({ spec: design, fields: slides.slides, handle: account.instagramHandle, images, structure: slides.structure });
+      // Artwork is optional: an account without any renders exactly as before.
+      const backgrounds = options.imageBucket ? await loadBackgroundImages(options.imageBucket, account.id).catch(() => ({})) : {};
+      const pptx = await renderDeckPptx({ spec: design, fields: slides.slides, handle: account.instagramHandle, images, structure: slides.structure, backgrounds });
       ({ designId } = await canva.importFile({ title: post.title, bytes: pptx, mimeType: PPTX_MIME }));
     }
 

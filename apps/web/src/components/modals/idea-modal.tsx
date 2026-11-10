@@ -7,13 +7,10 @@ import { useWorkspace } from "../workspace-context";
 import type { IdeaCandidate } from "../../lib/mock-data";
 import { Modal } from "./modal";
 
-const SAMPLE_TEXT =
-  "最近、フロントエンド界隈で話題になっている 'React Server Components' について、社内で議論がありました。\nこの技術のメリットとデメリットを、駆け出しエンジニア向けに分かりやすく解説するカルーセル投稿を作りたいです。";
-
 export function IdeaModal() {
   const router = useRouter();
   const { closeModal, addDraftFromIdea, notify, generateIdeasFromApi, apiReady } = useWorkspace();
-  const [text, setText] = useState(SAMPLE_TEXT);
+  const [text, setText] = useState("");
   const [url, setUrl] = useState("");
   const [fileName, setFileName] = useState<string | null>(null);
   const [ideas, setIdeas] = useState<readonly IdeaCandidate[] | null>(null);

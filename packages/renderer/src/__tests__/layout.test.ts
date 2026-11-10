@@ -165,3 +165,41 @@ describe("short headings stay on one line", () => {
     expect(head.px).toBeGreaterThanOrEqual(110 * 0.7 - 1);
   });
 });
+
+describe("background artwork", () => {
+  const fields = {} as Record<string, string>;
+  const base = { spec: DEFAULT_DESIGN_SPEC, index: 1, fields, handle: "@a" };
+
+  it("draws a full-page cover image first and no decoration when the role has artwork", () => {
+    const els = layoutSlide({ ...base, backgrounds: { cover: ["data:image/jpeg;base64,AAAA"] } });
+    expect(els[0]).toMatchObject({ type: "image", role: "background", fit: "cover", box: { x: 0, y: 0, w: 1080, h: 1350 } });
+    expect(els.some((el) => el.role === "decor")).toBe(false);
+    expect(els.find((el) => el.role === "frame")).toMatchObject({ opacity: expect.any(Number) });
+  });
+
+  it("picks the variant by the post's bgVariant and carries flip and crop", () => {
+    const spec = { ...DEFAULT_DESIGN_SPEC, layout: { ...DEFAULT_DESIGN_SPEC.layout, bgVariant: 3, bgFlip: true, bgOffset: 0.8 } };
+    const [art] = layoutSlide({ ...base, spec, backgrounds: { cover: ["a", "b"] } });
+    expect(art).toMatchObject({ src: "b", flip: true, focusY: 0.8 });
+  });
+
+  it("is unchanged for roles without artwork", () => {
+    const els = layoutSlide({ ...base, backgrounds: { point: ["x"] } });
+    expect(els.some((el) => el.role === "background")).toBe(false);
+    expect(els.some((el) => el.role === "decor")).toBe(true);
+  });
+});
+
+describe("per-role design in a slide", () => {
+  const spec = applySpecPatch(DEFAULT_DESIGN_SPEC, { roles: { cover: { theme: { card: "#1f4d45", ink: "#ffffff", primary: "#ffe27a" }, layout: { decor: "none" } } } });
+  const input = { index: 1, fields, handle: "@a" };
+
+  it("draws the cover with the cover's colors and decoration, other pages with the base design", () => {
+    const cover = layoutSlide({ spec, ...input });
+    expect(cover.find((el) => el.role === "frame")).toMatchObject({ fill: "#1f4d45" });
+    expect(cover.some((el) => el.role === "decor")).toBe(false);
+    const point = layoutSlide({ spec, ...input, index: 3 });
+    expect(point.find((el) => el.role === "frame")).toMatchObject({ fill: DEFAULT_DESIGN_SPEC.theme.card });
+    expect(point.some((el) => el.role === "decor")).toBe(true);
+  });
+});

@@ -1,5 +1,5 @@
 import { DEFAULT_STRUCTURE } from "@ama/shared";
-import { layoutSlide, SLIDE_HEIGHT, SLIDE_WIDTH, type Box, type LayoutEl, type LayoutInput } from "./layout";
+import { layoutSlide, withRoleSpec, SLIDE_HEIGHT, SLIDE_WIDTH, type Box, type LayoutEl, type LayoutInput } from "./layout";
 import type { DesignSpec } from "./spec";
 
 export { SLIDE_HEIGHT, SLIDE_WIDTH, slideKind } from "./layout";
@@ -7,6 +7,15 @@ export type { SlideFieldsLike, SlideKind } from "./layout";
 
 function esc(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** `#rgb`/`#rrggbb` as an rgba() color when `opacity` is given. */
+function withOpacity(color: string, opacity: number | undefined): string {
+  if (opacity === undefined) return color;
+  const digits = color.replace("#", "");
+  const full = digits.length === 3 ? [...digits].map((d) => d + d).join("") : digits;
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16));
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 }
 
 const boxCss = (b: Box) => `left: ${b.x}px; top: ${b.y}px; width: ${b.w}px; height: ${b.h}px;`;
@@ -17,11 +26,14 @@ function element(el: LayoutEl, spec: DesignSpec): string {
   if (el.type === "shape") {
     const radius = el.shape === "ellipse" ? "border-radius: 50%;" : el.shape === "roundRect" ? `border-radius: ${el.radius ?? 0}px;` : "";
     const line = el.line ? `border: ${el.line.width}px solid ${el.line.color};` : "";
-    const opacity = el.opacity !== undefined ? `opacity: ${el.opacity};` : "";
-    return `<div class="el"${role} style="${boxCss(el.box)} background: ${el.fill}; ${radius} ${line} ${opacity}"></div>`;
+    // Only the fill is translucent (as in the PPTX), so an outline stays solid.
+    return `<div class="el"${role} style="${boxCss(el.box)} background: ${withOpacity(el.fill, el.opacity)}; ${radius} ${line}"></div>`;
   }
   if (el.type === "image") {
-    return `<img class="el"${role} src="${esc(el.src)}" alt="" style="${boxCss(el.box)} object-fit: contain; border-radius: ${el.radius ?? 0}px;">`;
+    const cover = el.fit === "cover";
+    const fit = cover ? `object-fit: cover; object-position: 50% ${Math.round((el.focusY ?? 0.5) * 100)}%;` : "object-fit: contain;";
+    const flip = el.flip ? " transform: scaleX(-1);" : "";
+    return `<img class="el"${role} src="${esc(el.src)}" alt="" style="${boxCss(el.box)} ${fit} border-radius: ${el.radius ?? 0}px;${flip}">`;
   }
   const fill = el.fill ? `background: ${el.fill}; border-radius: ${el.radius ?? 0}px;` : "";
   const underline = el.underline ? " text-decoration: underline; text-underline-offset: 12px;" : "";
@@ -40,7 +52,8 @@ function css(spec: DesignSpec): string {
 }
 
 function slideBlock(input: LayoutInput): string {
-  return `<div class="slide">${layoutSlide(input).map((el) => element(el, input.spec)).join("")}</div>`;
+  const { spec } = withRoleSpec(input);
+  return `<div class="slide" style="background: ${spec.theme.bg}">${layoutSlide(input).map((el) => element(el, spec)).join("")}</div>`;
 }
 
 function htmlDocument(spec: DesignSpec, body: string, extraCss = ""): string {

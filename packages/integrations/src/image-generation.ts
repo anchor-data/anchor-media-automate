@@ -15,6 +15,12 @@ export type GenerateSlideImageInput = {
   /** Reference images sent with every request so the subject and style stay consistent. */
   references: readonly ReferenceImage[];
   model?: string;
+  /** Output size; default square. Backgrounds use the tall 1024x1536. */
+  size?: "1024x1024" | "1024x1536" | "1536x1024";
+  /** Image model quality. Default is the model's own (high, about 4x the price of medium). */
+  quality?: "low" | "medium" | "high";
+  /** png (default) or jpeg (about a tenth of the size, for full-page artwork). */
+  format?: "png" | "jpeg";
   /** Names this image in the dev cost log, e.g. "image s2_image". */
   label?: string;
   fetchImpl?: typeof fetch;
@@ -23,7 +29,7 @@ export type GenerateSlideImageInput = {
 
 export type GeneratedImage = {
   bytes: Uint8Array;
-  contentType: "image/png";
+  contentType: "image/png" | "image/jpeg";
   /** Estimated cost from the usage OpenAI reports; null when unknown. */
   costUsd: number | null;
 };
@@ -56,7 +62,16 @@ export async function generateSlideImage(input: GenerateSlideImageInput): Promis
   const model = input.model ?? DEFAULT_MODEL;
 
   const buildRequest = (): { url: string; init: RequestInit } => {
-    const common = { model, background: "auto", output_format: "png", size: "1024x1024", n: "1" };
+    const format = input.format ?? "png";
+    const common = {
+      model,
+      background: "auto",
+      output_format: format,
+      ...(format === "jpeg" ? { output_compression: "80" } : {}),
+      ...(input.quality ? { quality: input.quality } : {}),
+      size: input.size ?? "1024x1024",
+      n: "1"
+    };
     if (input.references.length === 0) {
       return {
         url: `${OPENAI_IMAGES_URL}/generations`,
@@ -95,7 +110,7 @@ export async function generateSlideImage(input: GenerateSlideImageInput): Promis
     logOpenAiImageCost(input.label ?? "image", model, data.usage);
     return {
       bytes: fromBase64(encoded),
-      contentType: "image/png",
+      contentType: input.format === "jpeg" ? "image/jpeg" : "image/png",
       costUsd: estimateOpenAiImageCost(model, data.usage)?.usd ?? null
     };
   }

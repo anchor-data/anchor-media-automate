@@ -8,3 +8,4 @@ export * from "./design";
 export * from "./layout";
 export * from "./image-size";
 export * from "./structure";
+export * from "./palette";

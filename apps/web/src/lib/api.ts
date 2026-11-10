@@ -258,14 +258,32 @@ export async function saveAccountDesignNotes(accountId: string, body: { guidelin
 /** Derive the account's design from reference screenshots (image data URLs) and the guideline. */
 export async function analyzeAccountDesign(
   accountId: string,
-  body: { screenshots: string[]; guideline?: string; referenceNote?: string }
+  body: { screenshots: string[]; screenshotPages?: number[]; guideline?: string; referenceNote?: string }
 ) {
   return request<{ design: AccountDesignView }>(`/accounts/${accountId}/design/analyze`, { method: "POST", body: JSON.stringify(body) });
 }
 
 /** Screenshots the current design was derived from. `enabled` is false when the API has no image storage. */
 export async function listDesignReferences(accountId: string) {
-  return request<{ items: Array<{ name: string }>; enabled: boolean }>(`/accounts/${accountId}/design/references`);
+  return request<{ items: Array<{ name: string; page: number | null }>; enabled: boolean }>(`/accounts/${accountId}/design/references`);
+}
+
+/** Attach one reference screenshot (image data URL) to a page of the carousel (0 = no page). */
+export async function addDesignReference(accountId: string, screenshot: string, page: number, palette = "") {
+  return request<{ item: { name: string; page: number | null } }>(`/accounts/${accountId}/design/references`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ screenshot, page, palette })
+  });
+}
+
+/** Say which page of the carousel a saved reference shows (0 clears it). The file is renamed, so the new name comes back. */
+export async function setDesignReferencePage(accountId: string, name: string, page: number) {
+  return request<{ item: { name: string; page: number | null } }>(`/accounts/${accountId}/design/references/${encodeURIComponent(name)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page })
+  });
 }
 
 export async function deleteDesignReference(accountId: string, name: string) {
@@ -274,6 +292,21 @@ export async function deleteDesignReference(accountId: string, name: string) {
 
 export const designReferenceUrl = (accountId: string, name: string) =>
   `${API_BASE_URL}/accounts/${accountId}/design/references/${encodeURIComponent(name)}`;
+
+export type DesignBackground = { role: SlideRole; name: string };
+
+/** Background artwork generated from the references. `enabled` is false when the API has no image storage. */
+export async function listDesignBackgrounds(accountId: string) {
+  return request<{ items: DesignBackground[]; enabled: boolean }>(`/accounts/${accountId}/design/backgrounds`);
+}
+
+/** Generate the artwork variants of one page role (takes a while: it calls the image model). */
+export async function generateDesignBackground(accountId: string, role: SlideRole) {
+  return request<{ items: DesignBackground[]; costUsd: number }>(`/accounts/${accountId}/design/backgrounds/${role}`, { method: "POST" });
+}
+
+export const designBackgroundUrl = (accountId: string, name: string) =>
+  `${API_BASE_URL}/accounts/${accountId}/design/backgrounds/${encodeURIComponent(name)}`;
 
 /** `reexport` refreshes the previews from the stored Canva design (including edits made in Canva) without re-importing. */
 export async function renderPost(postId: string, reexport: boolean) {

@@ -1,5 +1,5 @@
 import { DEFAULT_STRUCTURE, roleOf, type SlideRole } from "@ama/shared";
-import type { DesignSpec } from "./spec";
+import { specForRole, type DesignSpec } from "./spec";
 import { textUnits, wrapJapanese } from "./wrap";
 
 /**
@@ -15,7 +15,7 @@ export type SlideKind = SlideRole;
 export type Align = "left" | "center" | "right";
 export interface Box { x: number; y: number; w: number; h: number }
 
-export type LayoutEl = { role?: "decor" | "frame" | "bar" | "pager" | "pager-active" | "handle" } & (
+export type LayoutEl = { role?: "background" | "decor" | "frame" | "bar" | "pager" | "pager-active" | "handle" } & (
   | { type: "shape"; shape: "rect" | "roundRect" | "ellipse"; box: Box; fill: string; opacity?: number; line?: { color: string; width: number }; radius?: number }
   | {
       type: "text";
@@ -32,7 +32,7 @@ export type LayoutEl = { role?: "decor" | "frame" | "bar" | "pager" | "pager-act
       fill?: string;
       radius?: number;
     }
-  | { type: "image"; box: Box; src: string; radius?: number }
+  | { type: "image"; box: Box; src: string; radius?: number; fit?: "contain" | "cover"; flip?: boolean; focusY?: number }
 );
 
 export interface LayoutInput {
@@ -45,6 +45,8 @@ export interface LayoutInput {
   images?: Readonly<Record<string, string>>;
   /** Pages of the deck (the account's structure). Default: the 8-page deck. */
   structure?: readonly SlideRole[];
+  /** Background artwork variants by page role (image data URLs or urls). A page with one is drawn on top of it. */
+  backgrounds?: Partial<Record<SlideRole, readonly string[]>>;
 }
 
 /** Role of a page in the default 8-page deck. */
@@ -96,12 +98,16 @@ function decor(spec: DesignSpec): LayoutEl[] {
   }
 }
 
-function frame(spec: DesignSpec): LayoutEl[] {
+/** Share of the panel's color kept when it sits on background artwork, so the artwork still shows through. */
+const PANEL_OVER_ARTWORK = 0.9;
+
+function frame(spec: DesignSpec, overArtwork: boolean): LayoutEl[] {
   const { theme: c, layout: l } = spec;
   if (l.frame === "none") return [];
   return [
     {
       role: "frame", type: "shape", shape: "roundRect", box: box(40, 50, 1000, 1130), radius: l.radius, fill: c.card,
+      ...(overArtwork ? { opacity: PANEL_OVER_ARTWORK } : {}),
       ...(l.frame === "outline" ? { line: { color: c.primary, width: 8 } } : {})
     }
   ];
@@ -231,8 +237,32 @@ function content({ spec, index, fields: f, images, structure = DEFAULT_STRUCTURE
   return els;
 }
 
-/** All elements of one slide in paint order (decoration, frame, content, bottom bar). */
-export function layoutSlide(input: LayoutInput): LayoutEl[] {
-  const pages = (input.structure ?? DEFAULT_STRUCTURE).length;
-  return [...decor(input.spec), ...frame(input.spec), ...content(input), ...bar(input.spec, input.index, input.handle, pages)];
+/** All elements of one slide in paint order (artwork or decoration, frame, content, bottom bar). */
+export function layoutSlide(raw: LayoutInput): LayoutEl[] {
+  const input = withRoleSpec(raw);
+  const structure = input.structure ?? DEFAULT_STRUCTURE;
+  const artwork = backgroundOf(input, structure);
+  return [
+    ...(artwork ? [artwork] : decor(input.spec)),
+    ...frame(input.spec, artwork !== null),
+    ...content(input),
+    ...bar(input.spec, input.index, input.handle, structure.length)
+  ];
+}
+
+/** The same input with the design this page's role is drawn with (the base design plus that role's overrides). */
+export function withRoleSpec(input: LayoutInput): LayoutInput {
+  const role = roleOf(input.structure ?? DEFAULT_STRUCTURE, input.index);
+  return { ...input, spec: specForRole(input.spec, role) };
+}
+
+/** Full-page artwork for this page's role: the post's chosen variant, mirrored/cropped as the post's design says. */
+function backgroundOf(input: LayoutInput, structure: readonly SlideRole[]): LayoutEl | null {
+  const variants = input.backgrounds?.[roleOf(structure, input.index) ?? "point"];
+  if (!variants || variants.length === 0) return null;
+  const { bgVariant, bgFlip, bgOffset } = input.spec.layout;
+  return {
+    role: "background", type: "image", box: box(0, 0, SLIDE_WIDTH, SLIDE_HEIGHT),
+    src: variants[bgVariant % variants.length]!, fit: "cover", flip: bgFlip, focusY: bgOffset
+  };
 }

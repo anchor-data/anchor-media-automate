@@ -28,6 +28,10 @@ const pick = <T>(random: () => number, items: readonly T[]): T => items[Math.min
  * A slightly different take on the account's design for one post, deterministic per `seed` (use the
  * post id). What may vary is bounded by `layout.variety`; colors come only from the account's own
  * accent set, and readability is re-checked for whichever accent was chosen.
+ *
+ * Background artwork varies too: which variant a post uses, whether it is mirrored and how it is
+ * cropped (subtle keeps the crop near the middle; lively uses the whole range). The artwork is
+ * chosen last, so adding it did not change what the other choices were for an existing seed.
  */
 export function varySpec(spec: DesignSpec, seed: string): DesignSpec {
   if (spec.layout.variety === "none") return spec;
@@ -49,6 +53,19 @@ export function varySpec(spec: DesignSpec, seed: string): DesignSpec {
     const decor = random() < 0.25 ? pick(random, ["blobs", "dots", "stripes"] as const) : spec.layout.decor;
     const structure = random() < 0.3 ? pick(random, ["classic", "split", "banner"] as const) : spec.layout.structure;
     next = { ...next, type: { ...next.type, underlineHeads }, layout: { ...next.layout, decor, structure } };
+  }
+
+  const bgVariant = Math.floor(random() * 10);
+  const bgFlip = random() < 0.5;
+  const spread = spec.layout.variety === "lively" ? 1 : 0.4;
+  const bgOffset = Math.round((0.5 + (random() - 0.5) * spread) * 100) / 100;
+  next = { ...next, layout: { ...next.layout, bgVariant, bgFlip, bgOffset } };
+
+  if (spec.layout.variety === "lively") {
+    // Corner roundness and number size: small steps, so the account's own look stays recognizable.
+    const radius = Math.round(pick(random, [spec.layout.radius, spec.layout.radius * 0.5, Math.min(64, spec.layout.radius * 1.4)]));
+    const numScale = Math.round(Math.min(1.2, Math.max(0.6, spec.type.numScale * (0.9 + random() * 0.2))) * 100) / 100;
+    next = { ...next, type: { ...next.type, numScale }, layout: { ...next.layout, radius } };
   }
   return ensureReadable(next);
 }

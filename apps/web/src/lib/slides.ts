@@ -17,7 +17,7 @@ export const ROLE_LABEL: Record<SlideRole, string> = {
   cover: "フック",
   empathy: "課題",
   point: "要点",
-  pick: "求人 / まとめ",
+  pick: "まとめ",
   cta: "CTA"
 };
 
